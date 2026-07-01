@@ -13,4 +13,5 @@ public class Main {
         frame.add(board);
         frame.setVisible(true);
     }
+
 }

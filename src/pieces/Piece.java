@@ -42,6 +42,15 @@ public class Piece {
     public  Piece(Board board){
         this.board=board;
     }
+
+    public boolean isValidMovement(int col,int row){
+        return true;
+    }
+    public  boolean moveCollidesWithPiece(int col , int row){
+        return false;
+    }
+    public boolean isFirstMove = true;
+
     public  void paint(Graphics2D g2d){
         g2d.drawImage(sprite,xPos,yPos,null);
     }

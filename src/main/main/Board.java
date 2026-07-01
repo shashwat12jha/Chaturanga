@@ -50,18 +50,30 @@ public class Board  extends JPanel {
         }
         public  void paintComponent(Graphics g){
             Graphics2D g2d = (Graphics2D) g;
+            //paint board
             for(int r = 0 ; r < rows; r++){
                 for(int c = 0 ; c < cols ; c++){
                     g2d.setColor((((r+c)%2)==0)?new Color(227, 198, 181):new Color(157, 105,77));
                     g2d.fillRect(c*tileSize,r*tileSize,tileSize,tileSize);
                 }
             }
+            //paint hightlights
+            if(selectedPiece!=null)
+            for(int r = 0 ; r < rows; r++){
+                for(int c = 0 ; c < cols ; c++){
+                   if (isValidMove(new Move(this,selectedPiece,c,r))){
+                       g2d.setColor(new Color(68,180,57,190));
+                       g2d.fillRect(c*tileSize,r*tileSize,tileSize,tileSize);
+                   }
+                }
+            }
+            //paint pieces
             for (Piece piece : pieceList){
                 piece.paint(g2d);
             }
          }
-
     public void makeMove(Move move) {
+      move.piece.isFirstMove=false;
         move.piece.col=move.newCol;
         move.piece.row=move.newRow;
         move.piece.xPos=move.newCol*tileSize;
@@ -76,8 +88,8 @@ public class Board  extends JPanel {
             if(sameTeam(move.piece,move.capture)){
                 return false;
             }
-
-
+            if(!move.piece.isValidMovement(move.newCol,move.newRow)) return false;
+            if(move.piece.moveCollidesWithPiece(move.newCol,move.newRow)) return false;
 
             return true;
     }
