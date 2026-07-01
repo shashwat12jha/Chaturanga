@@ -1,0 +1,11 @@
+# IntelliJ IDEA
+.idea/
+
+# Build output
+out/
+
+# Java bytecode
+*.class
+
+# IntelliJ module files
+*.iml
