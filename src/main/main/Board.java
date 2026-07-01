@@ -73,16 +73,50 @@ public class Board  extends JPanel {
             }
          }
     public void makeMove(Move move) {
-      move.piece.isFirstMove=false;
-        move.piece.col=move.newCol;
-        move.piece.row=move.newRow;
-        move.piece.xPos=move.newCol*tileSize;
-        move.piece.yPos=move.newRow*tileSize;
-        capture(move);
+
+            if(move.piece.name.equals("Pawn")) movePawn(move);
+            else {
+                move.piece.isFirstMove = false;
+                move.piece.col = move.newCol;
+                move.piece.row = move.newRow;
+                move.piece.xPos = move.newCol * tileSize;
+                move.piece.yPos = move.newRow * tileSize;
+                capture(move.capture);
+            }
+    }
+    public int enPassantTile =-1;
+    private void movePawn(Move move) {
+
+            //enPassant
+        int colorIndex = move.piece.isWhite?1:-1;
+        if(getTileNum(move.newCol,move.newRow)==enPassantTile){
+            move.capture=getPiece(move.newCol,move.newRow+colorIndex);
+        }
+        if(Math.abs(move.piece.row-move.newRow)==2){
+            enPassantTile = getTileNum(move.newCol,move.newRow+colorIndex);
+        }
+        else enPassantTile = -1;
+
+        //promotion
+
+        colorIndex=move.piece.isWhite?0:7;
+        if(move.newRow==colorIndex) promotePawn(move);
+        move.piece.isFirstMove = false;
+        move.piece.col = move.newCol;
+        move.piece.row = move.newRow;
+        move.piece.xPos = move.newCol * tileSize;
+        move.piece.yPos = move.newRow * tileSize;
+        capture(move.capture);
     }
 
-    public void capture(Move move){
-            pieceList.remove(move.capture);
+    private void promotePawn(Move move) {
+        pieceList.add(new Queen(this,move.newCol,move.newRow,move.piece.isWhite));
+        capture(move.piece);
+    }
+
+
+    public void capture(Piece piece){
+            pieceList.remove(piece);
     }
     public boolean isValidMove(Move move) {
             if(sameTeam(move.piece,move.capture)){
@@ -92,6 +126,9 @@ public class Board  extends JPanel {
             if(move.piece.moveCollidesWithPiece(move.newCol,move.newRow)) return false;
 
             return true;
+    }
+    public int getTileNum(int col , int row){
+        return row*rows + col;
     }
     public boolean sameTeam(Piece p1 , Piece p2){
             if(p1==null || p2==null) return false;

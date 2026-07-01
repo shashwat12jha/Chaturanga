@@ -30,6 +30,10 @@ public class Pawn extends Piece{
         if(col==this.col-1 && row== this.row-colorIndex && board.getPiece(col,row)!=null) return true;
         //right
         if(col==this.col+1 && row== this.row-colorIndex && board.getPiece(col,row)!=null) return true;
+        //enPassant left
+        if(board.getTileNum(col,row)==board.enPassantTile && col==this.col-1 && row == this.row-colorIndex && board.getPiece(col,row+colorIndex)!=null) return true;
+        //enPassant right
+        if(board.getTileNum(col,row)==board.enPassantTile && col==this.col+1 && row == this.row-colorIndex && board.getPiece(col,row+colorIndex)!=null) return true;
 
         return false;
     }
