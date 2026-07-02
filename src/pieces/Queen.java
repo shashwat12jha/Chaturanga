@@ -13,7 +13,7 @@ public class Queen extends Piece{
         this.xPos=col*board.tileSize;
         this.yPos=row*board.tileSize;
         this.isWhite=isWhite;
-        this.name = "Pawn";
+        this.name = "Queen";
         this.sprite=sheet.getSubimage(1*sheetScale,isWhite?0:sheetScale,sheetScale,sheetScale).getScaledInstance(board.tileSize,board.tileSize, BufferedImage.SCALE_SMOOTH);
     }
     public boolean moveCollidesWithPiece(int col, int row) {

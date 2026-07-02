@@ -24,6 +24,14 @@ public class Board  extends JPanel {
             }
             return null;
         }
+
+        Piece findKing(boolean isWhite){
+            for(Piece piece : pieceList){
+                if(isWhite==piece.isWhite && piece.name.equals("King")) return piece;
+
+            }
+            return null;
+        }
         public void addPieces(){
             pieceList.add(new Knight(this,1,0,false));
             pieceList.add(new Bishop(this,2,0,false));
@@ -118,13 +126,15 @@ public class Board  extends JPanel {
     public void capture(Piece piece){
             pieceList.remove(piece);
     }
+    CheckScanner checkScanner = new CheckScanner(this);
     public boolean isValidMove(Move move) {
             if(sameTeam(move.piece,move.capture)){
                 return false;
             }
             if(!move.piece.isValidMovement(move.newCol,move.newRow)) return false;
             if(move.piece.moveCollidesWithPiece(move.newCol,move.newRow)) return false;
-
+            if(checkScanner.isKingChecked(move )) return false;
+            if(move.capture != null && move.capture.name.equals("King")) return false;
             return true;
     }
     public int getTileNum(int col , int row){
