@@ -5,7 +5,7 @@ import java.awt.*;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.stream.Collectors;
-
+import javax.swing.JTextArea;
 public class Board  extends JPanel {
     public int tileSize = 85;
     public String fenStringPosition = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
@@ -13,14 +13,35 @@ public class Board  extends JPanel {
     Input input = new Input(this);
     public  Piece selectedPiece;
     ArrayList<Piece> pieceList= new ArrayList<>();
-        public  Board(){
-            this.setPreferredSize(new Dimension(cols*tileSize,rows*tileSize));
-            this.addMouseListener(input);
-            this.addMouseMotionListener(input);
-            loadPositionFromFEN(fenStringPosition);
-        }
+    public Board(JTextArea moveHistoryArea) {
 
+        this.moveHistoryArea = moveHistoryArea;
 
+        setPreferredSize(new Dimension(tileSize * 8, tileSize * 8));
+
+        addMouseListener(input);
+        addMouseMotionListener(input);
+
+        loadPositionFromFEN(fenStringPosition);
+    }
+    private JTextArea moveHistoryArea;
+    private int moveNumber = 1;
+    private String getAlgebraicNotation(Piece piece, int toCol, int toRow) {
+
+        String prefix = switch (piece.name) {
+            case "King" -> "K";
+            case "Queen" -> "Q";
+            case "Rook" -> "R";
+            case "Bishop" -> "B";
+            case "Knight" -> "N";
+            default -> "";
+        };
+
+        char file = (char) ('a' + toCol);
+        char rank = (char) ('8' - toRow);
+
+        return prefix + file + rank;
+    }
         public Piece getPiece(int col,int row){
             for(Piece piece : pieceList){
                 if(piece.col==col && piece.row==row) return piece;
@@ -139,7 +160,18 @@ public class Board  extends JPanel {
          }
         public int enPassantTile =-1;
     private boolean isWhiteToMove=true;
-    private boolean isGameOver=!true;
+    public boolean isGameOver=false;
+    ChessTimer chessTimer;
+
+    public void setChessTimer(ChessTimer chessTimer) {
+        this.chessTimer = chessTimer;
+    }
+
+    public void handleTimeout(boolean isWhiteTimeout) {
+        isGameOver = true;
+        String winner = isWhiteTimeout ? "Black" : "White";
+        JOptionPane.showMessageDialog(this, "Game over Son " + winner + " Wins! You need to finish fast in chess", "Timeout", JOptionPane.INFORMATION_MESSAGE);
+    }
     int halfMoveClock = 0;
     public void makeMove(Move move) {
             boolean isPawnMove= move.piece.name.equals("Pawn");
@@ -170,7 +202,23 @@ public class Board  extends JPanel {
 
                 String currentFEN = generateFEN();
                 positionHistory.put(currentFEN, positionHistory.getOrDefault(currentFEN, 0) + 1);
+                String notation = getAlgebraicNotation(
+                move.piece,
+                move.piece.col,
+                move.piece.row
+        );
+
+        if(move.piece.isWhite){
+            moveHistoryArea.append(moveNumber + ". " + notation + " ");
+        }
+        else{
+            moveHistoryArea.append(notation + "\n");
+            moveNumber++;
+        }
                 updateGameState(currentFEN);
+                if (chessTimer != null && !isGameOver) {
+                    chessTimer.switchTurn();
+                }
     }
     HashMap<String, Integer> positionHistory = new HashMap<>();
     public String generateFEN() {
@@ -289,9 +337,9 @@ public class Board  extends JPanel {
         if(checkScanner.isGameOver(king)){
             if(checkScanner.isKingChecked(new Move(this,king,king.col,king.row))){
                 if(isWhiteToMove)
-                    JOptionPane.showMessageDialog(this, "Checkmate! White Wins!", "Game Over Son", JOptionPane.INFORMATION_MESSAGE);
-                else
                     JOptionPane.showMessageDialog(this, "Checkmate! Black Wins!", "Game Over Son", JOptionPane.INFORMATION_MESSAGE);
+                else
+                    JOptionPane.showMessageDialog(this, "Checkmate! White Wins!", "Game Over Son", JOptionPane.INFORMATION_MESSAGE);
             }
             else{
                 JOptionPane.showMessageDialog(this, "Stalemate! It's a draw!", "Game Over Son", JOptionPane.INFORMATION_MESSAGE);
@@ -331,10 +379,6 @@ public class Board  extends JPanel {
                 "Pawn Promotion", JOptionPane.DEFAULT_OPTION, JOptionPane.PLAIN_MESSAGE,
                 null, options, options[0]);
         switch (choice){
-            case 0 : {
-                pieceList.add(new Queen(this, move.newCol, move.newRow, move.piece.isWhite));
-                break;
-            }
             case 1 : {
                 pieceList.add(new Rook(this, move.newCol, move.newRow, move.piece.isWhite));
                 break;
@@ -345,6 +389,10 @@ public class Board  extends JPanel {
             }
             case 3 : {
                 pieceList.add(new Knight(this, move.newCol, move.newRow, move.piece.isWhite));
+                break;
+            }
+            default : {
+                pieceList.add(new Queen(this, move.newCol, move.newRow, move.piece.isWhite));
                 break;
             }
         }
