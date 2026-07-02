@@ -3,6 +3,7 @@ import pieces.*;
 import javax.swing.*;
 import java.awt.*;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.stream.Collectors;
 
 public class Board  extends JPanel {
@@ -139,8 +140,20 @@ public class Board  extends JPanel {
         public int enPassantTile =-1;
     private boolean isWhiteToMove=true;
     private boolean isGameOver=!true;
+    int halfMoveClock = 0;
     public void makeMove(Move move) {
+            boolean isPawnMove= move.piece.name.equals("Pawn");
+            boolean capture = move.capture!=null;
 
+            if(isPawnMove || capture) halfMoveClock=0;
+            else halfMoveClock++;
+
+        if (halfMoveClock >= 100) {
+            JOptionPane.showMessageDialog(this, "Draw by 50-Move Rule", "Game Over Son", JOptionPane.INFORMATION_MESSAGE);
+
+            isGameOver = true;
+
+        }
             if(move.piece.name.equals("Pawn")) movePawn(move);
             else enPassantTile = -1;
             if(move.piece.name.equals("King")) {
@@ -154,19 +167,141 @@ public class Board  extends JPanel {
                 move.piece.yPos = move.newRow * tileSize;
                 capture(move.capture);
                 isWhiteToMove=!isWhiteToMove;
-                updateGameState();
+
+                String currentFEN = generateFEN();
+                positionHistory.put(currentFEN, positionHistory.getOrDefault(currentFEN, 0) + 1);
+                updateGameState(currentFEN);
+    }
+    HashMap<String, Integer> positionHistory = new HashMap<>();
+    public String generateFEN() {
+        StringBuilder fen = new StringBuilder();
+
+        // ---------------- Piece Placement ----------------
+        for (int row = 0; row < 8; row++) {
+            int empty = 0;
+
+            for (int col = 0; col < 8; col++) {
+
+                Piece piece = getPiece(col, row);
+
+                if (piece == null) {
+                    empty++;
+                } else {
+
+                    if (empty > 0) {
+                        fen.append(empty);
+                        empty = 0;
+                    }
+
+                    char c = switch (piece.name) {
+                        case "Pawn" -> 'p';
+                        case "Knight" -> 'n';
+                        case "Bishop" -> 'b';
+                        case "Rook" -> 'r';
+                        case "Queen" -> 'q';
+                        case "King" -> 'k';
+                        default -> '?';
+                    };
+
+                    if (piece.isWhite)
+                        c = Character.toUpperCase(c);
+
+                    fen.append(c);
+                }
+            }
+
+            if (empty > 0)
+                fen.append(empty);
+
+            if (row != 7)
+                fen.append('/');
+        }
+
+        // ---------------- Side to Move ----------------
+        fen.append(isWhiteToMove ? " w " : " b ");
+
+        // ---------------- Castling Rights ----------------
+        StringBuilder castling = new StringBuilder();
+
+        Piece whiteKing = findKing(true);
+        Piece blackKing = findKing(false);
+
+        if (whiteKing != null && !whiteKing.isFirstMove) {
+
+            Piece rook = getPiece(7, 7);
+            if (rook != null &&
+                    rook.name.equals("Rook") &&
+                    rook.isWhite &&
+                    !rook.isFirstMove)
+                castling.append("K");
+
+            rook = getPiece(0, 7);
+            if (rook != null &&
+                    rook.name.equals("Rook") &&
+                    rook.isWhite &&
+                    !rook.isFirstMove)
+                castling.append("Q");
+        }
+
+        if (blackKing != null && !blackKing.isFirstMove) {
+
+            Piece rook = getPiece(7, 0);
+            if (rook != null &&
+                    rook.name.equals("Rook") &&
+                    !rook.isWhite &&
+                    !rook.isFirstMove)
+                castling.append("k");
+
+            rook = getPiece(0, 0);
+            if (rook != null &&
+                    rook.name.equals("Rook") &&
+                    !rook.isWhite &&
+                    !rook.isFirstMove)
+                castling.append("q");
+        }
+
+        if (castling.length() == 0)
+            fen.append("- ");
+        else
+            fen.append(castling).append(" ");
+
+        // ---------------- En Passant ----------------
+        if (enPassantTile == -1) {
+            fen.append("- ");
+        } else {
+            int col = enPassantTile % 8;
+            int row = enPassantTile / 8;
+
+            char file = (char) ('a' + col);
+            char rank = (char) ('8' - row);
+
+            fen.append(file).append(rank).append(" ");
+        }
+
+        // ---------------- Halfmove & Fullmove ----------------
+        fen.append("0 1");
+
+        return fen.toString();
     }
 
-    private void updateGameState() {
+    private void updateGameState(String currentFEN) {
         Piece king = findKing(isWhiteToMove);
         if(checkScanner.isGameOver(king)){
             if(checkScanner.isKingChecked(new Move(this,king,king.col,king.row))){
-                System.out.println(isWhiteToMove?"Black Wins":"White Wins");
+                if(isWhiteToMove)
+                    JOptionPane.showMessageDialog(this, "Checkmate! White Wins!", "Game Over Son", JOptionPane.INFORMATION_MESSAGE);
+                else
+                    JOptionPane.showMessageDialog(this, "Checkmate! Black Wins!", "Game Over Son", JOptionPane.INFORMATION_MESSAGE);
             }
             else{
-                System.out.println("StaleMate");
+                JOptionPane.showMessageDialog(this, "Stalemate! It's a draw!", "Game Over Son", JOptionPane.INFORMATION_MESSAGE);
             }
         }
+        else if(positionHistory.get(currentFEN)>=3) {
+            isGameOver=true;
+            JOptionPane.showMessageDialog(this, "3-Fold Repetition ! It's a draw!", "Game Over Son", JOptionPane.INFORMATION_MESSAGE);
+        }
+
     }
 
 
@@ -190,7 +325,29 @@ public class Board  extends JPanel {
     }
 
     private void promotePawn(Move move) {
-        pieceList.add(new Queen(this,move.newCol,move.newRow,move.piece.isWhite));
+        //pieceList.add(new Queen(this,move.newCol,move.newRow,move.piece.isWhite));
+        String[] options = {"Queen", "Rook", "Bishop", "Knight"};
+        int choice = JOptionPane.showOptionDialog(this, "Choose piece to promote to:",
+                "Pawn Promotion", JOptionPane.DEFAULT_OPTION, JOptionPane.PLAIN_MESSAGE,
+                null, options, options[0]);
+        switch (choice){
+            case 0 : {
+                pieceList.add(new Queen(this, move.newCol, move.newRow, move.piece.isWhite));
+                break;
+            }
+            case 1 : {
+                pieceList.add(new Rook(this, move.newCol, move.newRow, move.piece.isWhite));
+                break;
+            }
+            case 2 : {
+                pieceList.add(new Bishop(this, move.newCol, move.newRow, move.piece.isWhite));
+                break;
+            }
+            case 3 : {
+                pieceList.add(new Knight(this, move.newCol, move.newRow, move.piece.isWhite));
+                break;
+            }
+        }
         capture(move.piece);
     }
 
