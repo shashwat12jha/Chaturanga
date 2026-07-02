@@ -1,0 +1,12 @@
+package model;
+
+public enum GameResult {
+    IN_PROGRESS,
+    WHITE_WINS_CHECKMATE,
+    BLACK_WINS_CHECKMATE,
+    DRAW_STALEMATE,
+    DRAW_INSUFFICIENT,
+    DRAW_50_MOVE,
+    DRAW_REPETITION,
+    DRAW_AGREEMENT
+}

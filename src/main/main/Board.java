@@ -274,37 +274,37 @@ public class Board  extends JPanel {
         Piece whiteKing = findKing(true);
         Piece blackKing = findKing(false);
 
-        if (whiteKing != null && !whiteKing.isFirstMove) {
+        if (whiteKing != null && whiteKing.isFirstMove) {
 
             Piece rook = getPiece(7, 7);
             if (rook != null &&
                     rook.name.equals("Rook") &&
                     rook.isWhite &&
-                    !rook.isFirstMove)
+                    rook.isFirstMove)
                 castling.append("K");
 
             rook = getPiece(0, 7);
             if (rook != null &&
                     rook.name.equals("Rook") &&
                     rook.isWhite &&
-                    !rook.isFirstMove)
+                    rook.isFirstMove)
                 castling.append("Q");
         }
 
-        if (blackKing != null && !blackKing.isFirstMove) {
+        if (blackKing != null && blackKing.isFirstMove) {
 
             Piece rook = getPiece(7, 0);
             if (rook != null &&
                     rook.name.equals("Rook") &&
                     !rook.isWhite &&
-                    !rook.isFirstMove)
+                    rook.isFirstMove)
                 castling.append("k");
 
             rook = getPiece(0, 0);
             if (rook != null &&
                     rook.name.equals("Rook") &&
                     !rook.isWhite &&
-                    !rook.isFirstMove)
+                    rook.isFirstMove)
                 castling.append("q");
         }
 
@@ -335,6 +335,7 @@ public class Board  extends JPanel {
     private void updateGameState(String currentFEN) {
         Piece king = findKing(isWhiteToMove);
         if(checkScanner.isGameOver(king)){
+            isGameOver = true;
             if(checkScanner.isKingChecked(new Move(this,king,king.col,king.row))){
                 if(isWhiteToMove)
                     JOptionPane.showMessageDialog(this, "Checkmate! Black Wins!", "Game Over Son", JOptionPane.INFORMATION_MESSAGE);
@@ -345,7 +346,7 @@ public class Board  extends JPanel {
                 JOptionPane.showMessageDialog(this, "Stalemate! It's a draw!", "Game Over Son", JOptionPane.INFORMATION_MESSAGE);
             }
         }
-        else if(positionHistory.get(currentFEN)>=3) {
+        else if(positionHistory.getOrDefault(currentFEN, 0)>=3) {
             isGameOver=true;
             JOptionPane.showMessageDialog(this, "3-Fold Repetition ! It's a draw!", "Game Over Son", JOptionPane.INFORMATION_MESSAGE);
         }

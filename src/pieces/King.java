@@ -24,6 +24,7 @@ public class King extends Piece{
                     return  board.getPiece(5,row)==null &&
                             board.getPiece(6,row)==null &&
                             !board.checkScanner.isKingChecked(new Move(board,this,5,row)) &&
+                            !board.checkScanner.isKingChecked(new Move(board,this,6,row)) &&
                             !board.checkScanner.isKingChecked(new Move(board,this,this.col,this.row));
 
                 }
@@ -36,6 +37,7 @@ public class King extends Piece{
                             board.getPiece(2,row)==null &&
                             board.getPiece(1,row)==null &&
                             !board.checkScanner.isKingChecked(new Move(board,this,3,row)) &&
+                            !board.checkScanner.isKingChecked(new Move(board,this,2,row)) &&
                             !board.checkScanner.isKingChecked(new Move(board,this,this.col,this.row));
 
                 }

@@ -24,10 +24,11 @@ public class Piece {
                 sheet = ImageIO.read(is);
             } else {
                 java.io.File f = new java.io.File("src/res/pieces.png");
-                if (!f.exists()) {
-                    f = new java.io.File("C:/Users/shash/OneDrive/Desktop/Chaturanga/src/res/pieces.png");
+                if (f.exists()) {
+                    sheet = ImageIO.read(f);
+                } else {
+                    System.err.println("Could not find pieces.png in classpath or src/res/");
                 }
-                sheet = ImageIO.read(f);
             }
 
         } catch (Exception e) {
