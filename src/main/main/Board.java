@@ -7,6 +7,7 @@ import java.util.stream.Collectors;
 
 public class Board  extends JPanel {
     public int tileSize = 85;
+    public String fenStringPosition = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
     int cols = 8 , rows = 8;
     Input input = new Input(this);
     public  Piece selectedPiece;
@@ -15,7 +16,7 @@ public class Board  extends JPanel {
             this.setPreferredSize(new Dimension(cols*tileSize,rows*tileSize));
             this.addMouseListener(input);
             this.addMouseMotionListener(input);
-            addPieces();
+            loadPositionFromFEN(fenStringPosition);
         }
 
 
@@ -33,28 +34,82 @@ public class Board  extends JPanel {
             }
             return null;
         }
-        public void addPieces(){
-            pieceList.add(new Knight(this,1,0,false));
-            pieceList.add(new Bishop(this,2,0,false));
-            pieceList.add(new Rook(this,0,0,false));
-            pieceList.add(new Queen(this,3,0,false));
-            pieceList.add(new King(this,4,0,false));
-            pieceList.add(new Knight(this,6,0,false));
-            pieceList.add(new Bishop(this,5,0,false));
-            pieceList.add(new Rook(this,7,0,false));
+        public void loadPositionFromFEN(String fenString){
+            pieceList.clear();
+            String[] parts = fenString.split(" ");
+            String position = parts[0];
+            int row = 0;
+            int col = 0;
 
-            pieceList.add(new Knight(this,1,7,true));
-            pieceList.add(new Bishop(this,2,7,true));
-            pieceList.add(new Rook(this,0,7,true));
-            pieceList.add(new Queen(this,3,7,true));
-            pieceList.add(new King(this,4,7,true));
-            pieceList.add(new Knight(this,6,7,true));
-            pieceList.add(new Bishop(this,5,7,true));
-            pieceList.add(new Rook(this,7,7,true));
+            for (int i = 0; i < position.length(); i++) {
+                char ch = position.charAt(i);
 
-            for(int i=0;i<8;i++){
-                pieceList.add(new Pawn(this,i,1,false));
-                pieceList.add(new Pawn(this,i,6,true));
+                if (ch == '/') {
+                    row++;
+                    col = 0;
+                } else if (Character.isDigit(ch)) {
+                    col += Character.getNumericValue(ch);
+                } else {
+                    boolean isWhite = Character.isUpperCase(ch);
+                    char pieceChar = Character.toLowerCase(ch);
+
+                    switch (pieceChar) {
+                        case 'r':
+                            pieceList.add(new Rook(this, col, row, isWhite));
+                            break;
+
+                        case 'n':
+                            pieceList.add(new Knight( this, col, row, isWhite));
+                            break;
+
+                        case 'b':
+                            pieceList.add(new Bishop( this, col, row, isWhite));
+                            break;
+
+                        case 'q':
+                            pieceList.add(new Queen( this, col, row, isWhite));
+                            break;
+
+                        case 'k':
+                            pieceList.add(new King( this, col, row, isWhite));
+                            break;
+
+                        case 'p':
+                            pieceList.add(new Pawn( this, col, row, isWhite));
+                            break;
+                    }
+
+                    col++;
+                }
+            }
+            isWhiteToMove = parts[1].equals("w");
+            // castling
+            Piece bqr = getPiece(0, 0);
+            if (bqr instanceof Rook) {
+                bqr.isFirstMove = parts[2].contains("q");
+            }
+
+            Piece bkr = getPiece(7, 0);
+            if (bkr instanceof Rook) {
+                bkr.isFirstMove = parts[2].contains("k");
+            }
+
+            Piece wqr = getPiece(0, 7);
+            if (wqr instanceof Rook) {
+                wqr.isFirstMove = parts[2].contains("Q");
+            }
+
+            Piece wkr = getPiece(7, 7);
+            if (wkr instanceof Rook) {
+                wkr.isFirstMove = parts[2].contains("K");
+            }
+
+            // en passant square
+            if (parts[3].equals("-")) {
+                enPassantTile = -1;
+            } else {
+                enPassantTile = (7 - (parts[3].charAt(1) - '1')) * 8
+                        + (parts[3].charAt(0) - 'a');
             }
         }
         public  void paintComponent(Graphics g){
@@ -81,13 +136,14 @@ public class Board  extends JPanel {
                 piece.paint(g2d);
             }
          }
-    public int enPassantTile =-1;
+        public int enPassantTile =-1;
     private boolean isWhiteToMove=true;
     private boolean isGameOver=!true;
     public void makeMove(Move move) {
 
             if(move.piece.name.equals("Pawn")) movePawn(move);
-            else if(move.piece.name.equals("King")) {
+            else enPassantTile = -1;
+            if(move.piece.name.equals("King")) {
                 moveKing(move);
             }
 
@@ -142,7 +198,9 @@ public class Board  extends JPanel {
     public void capture(Piece piece){
             pieceList.remove(piece);
     }
-   public CheckScanner checkScanner = new CheckScanner(this);
+
+    public CheckScanner checkScanner = new CheckScanner(this);
+
     public boolean isValidMove(Move move) {
         if(move.piece.isWhite!=isWhiteToMove) return false;
         if(isGameOver) return false;
@@ -156,13 +214,17 @@ public class Board  extends JPanel {
             if(move.capture != null && move.capture.name.equals("King")) return false;
             return true;
     }
+
     public int getTileNum(int col , int row){
         return row*rows + col;
     }
+
     public boolean sameTeam(Piece p1 , Piece p2){
             if(p1==null || p2==null) return false;
             return p1.isWhite==p2.isWhite;
     }
+
+
     private void moveKing(Move move){
             if(Math.abs(move.piece.col-move.newCol)==2){
                 Piece rook;

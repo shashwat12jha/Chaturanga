@@ -23,7 +23,7 @@ public class Pawn extends Piece{
         if(this.col==col && row == this.row-colorIndex && board.getPiece(col,row)==null) return true;
 
         //push pawn 2;
-        if(isFirstMove && this.col==col && row == this.row-colorIndex*2 && board.getPiece(col,row)==null && board.getPiece(col,row+colorIndex)==null) return true;
+        if(this.row==(isWhite?6:1)&&isFirstMove && this.col==col && row == this.row-colorIndex*2 && board.getPiece(col,row)==null && board.getPiece(col,row+colorIndex)==null) return true;
 
        //capture
         //left
