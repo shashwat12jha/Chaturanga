@@ -11,8 +11,11 @@ import java.awt.event.MouseEvent;
 import java.util.List;
 import java.util.stream.Collectors;
 
+import javax.swing.JMenuItem;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
+import javax.swing.JPopupMenu;
+import javax.swing.SwingUtilities;
 
 import model.GameState;
 import model.Move;
@@ -38,6 +41,7 @@ public class BoardPanel extends JPanel {
     private final DrawDetector drawDetector;
     private final SANFormatter sanFormatter;
     private final MoveGenerator moveGenerator;
+    private final analysis.RefutationEngine refutationEngine;
     
     private int selectedCol = -1;
     private int selectedRow = -1;
@@ -53,6 +57,12 @@ public class BoardPanel extends JPanel {
 
     private java.util.function.Consumer<Move> onMoveListener;
     private Runnable onStateChangedListener;
+
+    // Input lock — true = player can interact, false = engine is thinking
+    private boolean inputEnabled = true;
+
+    // The state BEFORE the last move — used by coaching analysis
+    private GameState previousState = null;
     
     public BoardPanel() {
         this.setPreferredSize(new Dimension(cols * tileSize, rows * tileSize));
@@ -62,6 +72,7 @@ public class BoardPanel extends JPanel {
         this.drawDetector = new DrawDetector();
         this.sanFormatter = new SANFormatter();
         this.moveGenerator = new MoveGenerator();
+        this.refutationEngine = new analysis.RefutationEngine();
         this.state = FENParser.fromFEN(FENParser.STARTING_FEN);
         
         MouseAdapter ma = new MouseAdapter() {
@@ -69,8 +80,13 @@ public class BoardPanel extends JPanel {
             public void mousePressed(MouseEvent e) {
                 int col = e.getX() / tileSize;
                 int row = e.getY() / tileSize;
+
+                if (!inputEnabled || state.isGameOver()) return;
                 
-                if (state.isGameOver()) return;
+                if (SwingUtilities.isRightMouseButton(e)) {
+                    handleRightClick(col, row, e.getX(), e.getY());
+                    return;
+                }
                 
                 // If we click our own piece, we select it and start dragging
                 Piece p = state.getPiece(col, row);
@@ -123,6 +139,35 @@ public class BoardPanel extends JPanel {
         addMouseMotionListener(ma);
     }
     
+    private void handleRightClick(int col, int row, int mouseX, int mouseY) {
+        if (selectedCol == -1 || selectedRow == -1 || legalMovesForSelected == null) return;
+        
+        Move candidate = null;
+        for (Move m : legalMovesForSelected) {
+            if (m.toCol == col && m.toRow == row) {
+                candidate = m;
+                break;
+            }
+        }
+        
+        if (candidate != null) {
+            Move finalCandidate = candidate;
+            JPopupMenu popup = new JPopupMenu();
+            JMenuItem item = new JMenuItem("Analyzing 'Why Not This Move?'...");
+            item.setEnabled(false);
+            popup.add(item);
+            popup.show(this, mouseX, mouseY);
+            
+            new Thread(() -> {
+                analysis.RefutationEngine.Refutation ref = refutationEngine.refute(state, finalCandidate);
+                SwingUtilities.invokeLater(() -> {
+                    popup.setVisible(false);
+                    JOptionPane.showMessageDialog(this, ref.explanation, "Why Not This Move?", JOptionPane.INFORMATION_MESSAGE);
+                });
+            }).start();
+        }
+    }
+    
     private void attemptMove(int col, int row) {
         if (col < 0 || col > 7 || row < 0 || row > 7) {
             cancelSelection();
@@ -168,6 +213,7 @@ public class BoardPanel extends JPanel {
         Move move = new Move(selectedCol, selectedRow, col, row, p, cap, type, promo);
         
         if (validator.isLegal(move, state)) {
+            previousState = state;   // snapshot BEFORE apply for coaching analysis
             history.push(state);
             future.clear();
             state = applier.apply(move, state);
@@ -229,6 +275,28 @@ public class BoardPanel extends JPanel {
         state = FENParser.fromFEN(fen);
         cancelSelection();
         if (onStateChangedListener != null) onStateChangedListener.run();
+    }
+
+    /** Called by the engine (from EDT) to apply a move without user interaction. */
+    public void applyEngineMove(Move move) {
+        previousState = state;   // snapshot before apply
+        history.push(state);
+        future.clear();
+        state = applier.apply(move, state);
+        if (onMoveListener != null) onMoveListener.accept(move);
+        checkGameOver();
+        repaint();
+    }
+
+    /** Enable or disable user input (used to lock board while engine thinks). */
+    public void setInputEnabled(boolean enabled) {
+        this.inputEnabled = enabled;
+        repaint(); // redraw to show/hide thinking overlay
+    }
+
+    /** Returns the GameState snapshot just before the last applied move (for coaching). */
+    public GameState getPreviousState() {
+        return previousState;
     }
     
     public GameState getState() {
@@ -303,7 +371,7 @@ public class BoardPanel extends JPanel {
                 }
             }
         }
-        
+
         // Draw the dragged piece on top of everything
         if (isDragging && selectedCol != -1 && selectedRow != -1) {
             Piece p = state.getPiece(selectedCol, selectedRow);
@@ -312,6 +380,14 @@ public class BoardPanel extends JPanel {
                 int drawY = dragY - tileSize / 2;
                 renderer.drawPiece(g2d, p.type, p.isWhite, drawX, drawY);
             }
+        }
+
+        // "Thinking" overlay: dim the board while engine is computing
+        if (!inputEnabled) {
+            g2d.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.18f));
+            g2d.setColor(Color.BLACK);
+            g2d.fillRect(0, 0, getWidth(), getHeight());
+            g2d.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 1.0f));
         }
     }
 }

@@ -25,17 +25,23 @@ public class MoveApplier {
             // Already overwritten by setting piece at destination, handled below
         }
         
-        // Handle castling
+        // Handle castling — move the rook to its post-castle square.
+        // getPiece(col, row): kingside rook is on h-file (col=7), queenside on a-file (col=0).
+        // The rook always stays on the same ROW as the king (move.fromRow).
         if (move.type == model.MoveType.KINGSIDE_CASTLE) {
-            Piece rook = nextState.getPiece(move.fromRow, 7);
-            nextState.setPiece(move.fromRow, 7, null);
-            nextState.setPiece(move.fromRow, 5, rook);
-            rook.hasMoved = true;
+            Piece rook = nextState.getPiece(7, move.fromRow); // h-file rook
+            if (rook != null) {
+                nextState.setPiece(7, move.fromRow, null);   // remove from h-file
+                nextState.setPiece(5, move.fromRow, rook);   // place on f-file
+                rook.hasMoved = true;
+            }
         } else if (move.type == model.MoveType.QUEENSIDE_CASTLE) {
-            Piece rook = nextState.getPiece(move.fromRow, 0);
-            nextState.setPiece(move.fromRow, 0, null);
-            nextState.setPiece(move.fromRow, 3, rook);
-            rook.hasMoved = true;
+            Piece rook = nextState.getPiece(0, move.fromRow); // a-file rook
+            if (rook != null) {
+                nextState.setPiece(0, move.fromRow, null);   // remove from a-file
+                nextState.setPiece(3, move.fromRow, rook);   // place on d-file
+                rook.hasMoved = true;
+            }
         }
         
         // Handle promotion
