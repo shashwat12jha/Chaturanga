@@ -7,6 +7,8 @@ import javax.swing.JTextArea;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.text.SimpleDateFormat;
+import java.util.Date;
 
 public class PGNExporter {
 
@@ -29,9 +31,10 @@ public class PGNExporter {
 
             try (FileWriter writer = new FileWriter(fileToSave)) {
                 // Write standard PGN headers
+                String dateStr = new SimpleDateFormat("yyyy.MM.dd").format(new Date());
                 writer.write("[Event \"Casual Game\"]\n");
                 writer.write("[Site \"Chaturanga Chess App\"]\n");
-                writer.write("[Date \"????.??.??\"]\n");
+                writer.write("[Date \"" + dateStr + "\"]\n");
                 writer.write("[Round \"-\"]\n");
                 writer.write("[White \"Player 1\"]\n");
                 writer.write("[Black \"Player 2\"]\n");

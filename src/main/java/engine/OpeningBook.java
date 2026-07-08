@@ -2,6 +2,9 @@ package engine;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.io.File;
+import java.nio.file.Files;
+import java.util.List;
 
 /**
  * Opening book covering the top openings up to move 15.
@@ -42,6 +45,64 @@ public class OpeningBook {
         if (moves == null || moves.length == 0) return null;
         // Pick a weighted random among the candidates
         return moves[new java.util.Random().nextInt(moves.length)];
+    }
+
+    /**
+     * Loads a PGN file and adds all moves up to depth 15 to the opening book.
+     */
+    public void loadPGN(File file) throws java.io.IOException {
+        String content = Files.readString(file.toPath());
+        
+        // PGN files can contain multiple games separated by blank lines or headers.
+        // A simple split by "[Event" works if standard PGN.
+        String[] games = content.split("(?=\\[Event)");
+        
+        for (String gamePgn : games) {
+            if (gamePgn.trim().isEmpty()) continue;
+            
+            try {
+                model.GameState state = io.FENParser.fromFEN(io.FENParser.STARTING_FEN);
+                
+                List<model.Move> moves = io.PGNParser.parsePGN(gamePgn, state);
+                
+                // Add first 15 moves to the book
+                int maxDepth = Math.min(moves.size(), 30); // 30 plies = 15 full moves
+                for (int i = 0; i < maxDepth; i++) {
+                    model.Move m = moves.get(i);
+                    String fen = io.FENParser.toFEN(state);
+                    // Extract just the active color and pieces
+                    String[] parts = fen.split(" ");
+                    String fingerprint = parts[1] + "/" + parts[0];
+                    
+                    String uci = "" + (char)('a' + m.fromCol) + (8 - m.fromRow) + 
+                                 (char)('a' + m.toCol) + (8 - m.toRow);
+                    if (m.promotionPiece != null) {
+                        uci += Character.toLowerCase(m.promotionPiece.getFenChar(true));
+                    }
+                    
+                    // Add to book (appending to existing moves if present)
+                    String[] existing = book.get(fingerprint);
+                    if (existing == null) {
+                        book.put(fingerprint, new String[]{uci});
+                    } else {
+                        // Check if already contains
+                        boolean found = false;
+                        for (String e : existing) if (e.equals(uci)) found = true;
+                        if (!found) {
+                            String[] newMoves = new String[existing.length + 1];
+                            System.arraycopy(existing, 0, newMoves, 0, existing.length);
+                            newMoves[existing.length] = uci;
+                            book.put(fingerprint, newMoves);
+                        }
+                    }
+                    
+                    // Apply move for next iteration
+                    state = new rules.MoveApplier().apply(m, state);
+                }
+            } catch (Exception e) {
+                System.err.println("Failed to parse a game from PGN book: " + e.getMessage());
+            }
+        }
     }
 
     /** Checks whether a line is in the book. */

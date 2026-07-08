@@ -1,5 +1,6 @@
 package engine;
 
+import java.io.*;
 import java.util.Arrays;
 
 /**
@@ -227,5 +228,98 @@ public class ZobristHasher {
     public void clearTT() {
         Arrays.fill(ttDepth,  null);
         Arrays.fill(ttAlways, null);
+    }
+
+    public void saveToFile(File file) throws IOException {
+        try (DataOutputStream dos = new DataOutputStream(new BufferedOutputStream(new FileOutputStream(file)))) {
+            dos.writeInt(0x74747474); // Magic number
+            dos.writeInt(1);          // Version
+            
+            // Count entries
+            int count = 0;
+            for (TTEntry e : ttDepth) if (e != null) count++;
+            for (TTEntry e : ttAlways) if (e != null) count++;
+            dos.writeInt(count);
+            
+            for (TTEntry[] bucket : new TTEntry[][]{ttDepth, ttAlways}) {
+                for (TTEntry e : bucket) {
+                    if (e == null) continue;
+                    dos.writeLong(e.key);
+                    dos.writeInt(e.depth);
+                    dos.writeInt(e.score);
+                    dos.writeByte(e.type.ordinal());
+                    
+                    dos.writeBoolean(e.bestMove != null);
+                    if (e.bestMove != null) {
+                        model.Move m = e.bestMove;
+                        dos.writeByte(m.fromCol);
+                        dos.writeByte(m.fromRow);
+                        dos.writeByte(m.toCol);
+                        dos.writeByte(m.toRow);
+                        
+                        dos.writeByte(m.piece.type.ordinal());
+                        dos.writeBoolean(m.piece.isWhite);
+                        dos.writeBoolean(m.piece.hasMoved);
+                        
+                        dos.writeBoolean(m.captured != null);
+                        if (m.captured != null) {
+                            dos.writeByte(m.captured.type.ordinal());
+                            dos.writeBoolean(m.captured.isWhite);
+                            dos.writeBoolean(m.captured.hasMoved);
+                        }
+                        
+                        dos.writeByte(m.type.ordinal());
+                        
+                        dos.writeBoolean(m.promotionPiece != null);
+                        if (m.promotionPiece != null) {
+                            dos.writeByte(m.promotionPiece.ordinal());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    public void loadFromFile(File file) throws IOException {
+        try (DataInputStream dis = new DataInputStream(new BufferedInputStream(new FileInputStream(file)))) {
+            if (dis.readInt() != 0x74747474) throw new IOException("Invalid file format");
+            if (dis.readInt() != 1) throw new IOException("Unsupported version");
+            
+            clearTT();
+            
+            int count = dis.readInt();
+            model.PieceType[] pTypes = model.PieceType.values();
+            model.MoveType[] mTypes = model.MoveType.values();
+            EntryType[] eTypes = EntryType.values();
+            
+            for (int i = 0; i < count; i++) {
+                long key = dis.readLong();
+                int depth = dis.readInt();
+                int score = dis.readInt();
+                EntryType eType = eTypes[dis.readByte()];
+                
+                model.Move bestMove = null;
+                if (dis.readBoolean()) {
+                    int fromCol = dis.readByte();
+                    int fromRow = dis.readByte();
+                    int toCol = dis.readByte();
+                    int toRow = dis.readByte();
+                    
+                    model.Piece piece = new model.Piece(pTypes[dis.readByte()], dis.readBoolean(), dis.readBoolean());
+                    model.Piece captured = null;
+                    if (dis.readBoolean()) {
+                        captured = new model.Piece(pTypes[dis.readByte()], dis.readBoolean(), dis.readBoolean());
+                    }
+                    model.MoveType mType = mTypes[dis.readByte()];
+                    model.PieceType promo = null;
+                    if (dis.readBoolean()) {
+                        promo = pTypes[dis.readByte()];
+                    }
+                    bestMove = new model.Move(fromCol, fromRow, toCol, toRow, piece, captured, mType, promo);
+                }
+                
+                ttStore(key, depth, score, eType, bestMove);
+            }
+        }
     }
 }

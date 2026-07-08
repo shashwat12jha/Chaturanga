@@ -159,6 +159,11 @@ public class AnalysisPanel extends JPanel {
     /** Populate the search tree from a recorded search. */
     public void updateSearchTree(SearchNode root) {
         SwingUtilities.invokeLater(() -> {
+            if (root == null) {
+                treeModel.setRoot(new DefaultMutableTreeNode("Book move (no search performed)"));
+                treeModel.reload();
+                return;
+            }
             DefaultMutableTreeNode treeRoot = buildTreeNode(root);
             treeModel.setRoot(treeRoot);
             treeModel.reload();

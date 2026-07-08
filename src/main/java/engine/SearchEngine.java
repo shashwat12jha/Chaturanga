@@ -63,6 +63,7 @@ public class SearchEngine {
 
     private Personality personality = Personality.balanced();
     private SearchTreeRecorder recorder = null;
+    private Runnable onDepthComplete = null;
 
     // ---- Search state (reset on each findBestMove call) ----
 
@@ -80,6 +81,7 @@ public class SearchEngine {
 
     public void setPersonality(Personality p) { this.personality = p; }
     public void setRecorder(SearchTreeRecorder r) { this.recorder = r; }
+    public void setOnDepthComplete(Runnable callback) { this.onDepthComplete = callback; }
     public long getNodesSearched() { return nodesSearched; }
 
     /**
@@ -111,10 +113,6 @@ public class SearchEngine {
         clearKillers();
         clearHistory();
 
-        if (recorder != null) {
-            recorder.startRecording("root", -MATE_SCORE, MATE_SCORE);
-        }
-
         Move bestMove = null;
         int  prevScore = 0;
 
@@ -140,8 +138,15 @@ public class SearchEngine {
                 int beta  = prevScore + delta;
 
                 while (true) {
-                    result = negamax(state, depth, alpha, beta, 0, rootHash, deadline, false);
+                    if (recorder != null) recorder.startRecording("root", alpha, beta);
 
+                    SearchResult rootResult = negamax(state, depth, alpha, beta, 0, rootHash, deadline, true);
+
+                    if (onDepthComplete != null) {
+                        onDepthComplete.run();
+                    }
+
+                    result = rootResult;
                     if (result.timedOut) break;
 
                     if (result.score <= alpha) {
@@ -159,12 +164,14 @@ public class SearchEngine {
 
                     // Safety: avoid infinite widening
                     if (delta > 2000) {
+                        if (recorder != null) recorder.startRecording("root", -MATE_SCORE, MATE_SCORE);
                         result = negamax(state, depth, -MATE_SCORE, MATE_SCORE, 0, rootHash, deadline, false);
                         break;
                     }
                 }
             } else {
                 // Full-window search for early depths
+                if (recorder != null) recorder.startRecording("root", -MATE_SCORE, MATE_SCORE);
                 result = negamax(state, depth, -MATE_SCORE, MATE_SCORE, 0, rootHash, deadline, false);
             }
 

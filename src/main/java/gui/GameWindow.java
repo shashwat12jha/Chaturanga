@@ -9,6 +9,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
 import javax.swing.*;
+import javax.swing.border.CompoundBorder;
 import javax.swing.border.EmptyBorder;
 import javax.swing.border.LineBorder;
 
@@ -207,6 +208,59 @@ public class GameWindow {
 
         chessTimer.start();
 
+        // ---- Menu Bar ----
+        JMenuBar menuBar = new JMenuBar();
+        JMenu engineMenu = new JMenu("Engine");
+        
+        JMenuItem loadBookItem = new JMenuItem("Load Opening Book (PGN)...");
+        loadBookItem.addActionListener(e -> {
+            JFileChooser chooser = new JFileChooser();
+            chooser.setDialogTitle("Select PGN File");
+            if (chooser.showOpenDialog(frame) == JFileChooser.APPROVE_OPTION) {
+                try {
+                    engine.OpeningBook.get().loadPGN(chooser.getSelectedFile());
+                    JOptionPane.showMessageDialog(frame, "Opening book loaded successfully!");
+                } catch (Exception ex) {
+                    JOptionPane.showMessageDialog(frame, "Error loading book: " + ex.getMessage());
+                }
+            }
+        });
+        
+        JMenuItem saveTTItem = new JMenuItem("Save Engine Memory (TT)...");
+        saveTTItem.addActionListener(e -> {
+            JFileChooser chooser = new JFileChooser();
+            chooser.setDialogTitle("Save TT");
+            if (chooser.showSaveDialog(frame) == JFileChooser.APPROVE_OPTION) {
+                try {
+                    engine.ZobristHasher.get().saveToFile(chooser.getSelectedFile());
+                    JOptionPane.showMessageDialog(frame, "Engine memory saved!");
+                } catch (Exception ex) {
+                    JOptionPane.showMessageDialog(frame, "Error saving memory: " + ex.getMessage());
+                }
+            }
+        });
+        
+        JMenuItem loadTTItem = new JMenuItem("Load Engine Memory (TT)...");
+        loadTTItem.addActionListener(e -> {
+            JFileChooser chooser = new JFileChooser();
+            chooser.setDialogTitle("Load TT");
+            if (chooser.showOpenDialog(frame) == JFileChooser.APPROVE_OPTION) {
+                try {
+                    engine.ZobristHasher.get().loadFromFile(chooser.getSelectedFile());
+                    JOptionPane.showMessageDialog(frame, "Engine memory loaded!");
+                } catch (Exception ex) {
+                    JOptionPane.showMessageDialog(frame, "Error loading memory: " + ex.getMessage());
+                }
+            }
+        });
+
+        engineMenu.add(loadBookItem);
+        engineMenu.addSeparator();
+        engineMenu.add(saveTTItem);
+        engineMenu.add(loadTTItem);
+        menuBar.add(engineMenu);
+        frame.setJMenuBar(menuBar);
+
         frame.add(toolbar,     BorderLayout.NORTH);
         frame.add(leftPanel,   BorderLayout.WEST);
         frame.add(centerPanel, BorderLayout.CENTER);
@@ -245,7 +299,6 @@ public class GameWindow {
 
             if (visualizationMode) {
                 searchEngine.setRecorder(treeRecorder);
-                treeRecorder.startRecording("root", -SearchEngine.MATE_SCORE, SearchEngine.MATE_SCORE);
             }
 
             Move engineMove = searchEngine.findBestMove(stateForEngine, depth, 8_000);
@@ -317,19 +370,19 @@ public class GameWindow {
         JButton btnLoad    = toolbarBtn("📂 Load",   new Color(100, 75, 25));
 
         // Toggle buttons
-        JToggleButton btnCoaching = new JToggleButton("🧑‍🏫 Coaching");
-        styleToggleBtn(btnCoaching, new Color(120, 55, 190));
+        JToggleButton btnCoaching = new JToggleButton("Coaching");
+        styleToggleBtn(btnCoaching);
 
-        JToggleButton btnVsEngine = new JToggleButton("🤖 vs Engine");
+        JToggleButton btnVsEngine = new JToggleButton("vs Engine");
         btnVsEngine.setSelected(true);
-        styleToggleBtn(btnVsEngine, new Color(35, 115, 135));
+        styleToggleBtn(btnVsEngine);
 
-        JToggleButton btnVizMode = new JToggleButton("🌲 Viz Mode");
-        styleToggleBtn(btnVizMode, new Color(50, 130, 55));
+        JToggleButton btnVizMode = new JToggleButton("Viz Mode");
+        styleToggleBtn(btnVizMode);
 
         // Colour chooser
-        JToggleButton btnPlayBlack = new JToggleButton("▶ Play as Black");
-        styleToggleBtn(btnPlayBlack, new Color(80, 60, 30));
+        JToggleButton btnPlayBlack = new JToggleButton("Play as Black");
+        styleToggleBtn(btnPlayBlack);
 
         // Personality selector
         JComboBox<String> personalityBox = new JComboBox<>(
@@ -405,8 +458,7 @@ public class GameWindow {
 
         btnCoaching.addActionListener(e -> {
             coachingMode = btnCoaching.isSelected();
-            CardLayout cl = (CardLayout) leftPanel.getLayout();
-            cl.show(leftPanel, coachingMode ? "COACHING" : "PLAY");
+            updateLeftPanel();
         });
 
         btnVsEngine.addActionListener(e -> {
@@ -420,6 +472,7 @@ public class GameWindow {
         btnVizMode.addActionListener(e -> {
             visualizationMode = btnVizMode.isSelected();
             searchEngine.setRecorder(visualizationMode ? treeRecorder : null);
+            updateLeftPanel();
         });
 
         btnPlayBlack.addActionListener(e -> {
@@ -440,6 +493,7 @@ public class GameWindow {
                 case "Chaotic"     -> searchEngine.setPersonality(Personality.chaotic());
                 default            -> searchEngine.setPersonality(Personality.balanced());
             }
+            engine.ZobristHasher.get().clearTT(); // Clear memory so new personality takes effect immediately
         });
 
         return toolbar;
@@ -537,15 +591,38 @@ public class GameWindow {
         return btn;
     }
 
-    private void styleToggleBtn(JToggleButton btn, Color bg) {
-        btn.setBackground(bg.darker());
-        btn.setForeground(Color.WHITE);
+    private void updateLeftPanel() {
+        CardLayout cl = (CardLayout) leftPanel.getLayout();
+        cl.show(leftPanel, (coachingMode || visualizationMode) ? "COACHING" : "PLAY");
+    }
+
+    private void styleToggleBtn(JToggleButton btn) {
+        String baseText = btn.getText();
+        btn.setText((btn.isSelected() ? "[ON] " : "[OFF] ") + baseText);
+        
+        btn.setBackground(new Color(40, 44, 52));
+        btn.setForeground(new Color(220, 220, 220));
         btn.setFont(new Font("SansSerif", Font.BOLD, 12));
         btn.setFocusPainted(false);
         btn.setCursor(new Cursor(Cursor.HAND_CURSOR));
-        btn.setBorder(new EmptyBorder(6, 10, 6, 10));
+        btn.setBorder(new javax.swing.border.CompoundBorder(
+            new javax.swing.border.LineBorder(new Color(70, 75, 85), 1),
+            new javax.swing.border.EmptyBorder(6, 10, 6, 10)
+        ));
         btn.setOpaque(true);
-        btn.addChangeListener(e -> btn.setBackground(btn.isSelected() ? bg : bg.darker()));
+        
+        if (btn.isSelected()) {
+            btn.setForeground(new Color(150, 255, 150));
+        }
+
+        btn.addChangeListener(e -> {
+            btn.setText((btn.isSelected() ? "[ON] " : "[OFF] ") + baseText);
+            if (btn.isSelected()) {
+                btn.setForeground(new Color(150, 255, 150));
+            } else {
+                btn.setForeground(new Color(220, 220, 220));
+            }
+        });
     }
 
     private static JPanel createPlayerPanel(String name, JLabel timerLabel, Color bgColor, Color fgColor) {

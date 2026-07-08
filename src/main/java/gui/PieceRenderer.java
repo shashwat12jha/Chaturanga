@@ -32,11 +32,18 @@ public class PieceRenderer {
             if (is != null) {
                 spriteSheet = ImageIO.read(is);
             } else {
-                File f = new File("src/res/pieces.png");
-                if (f.exists()) {
-                    spriteSheet = ImageIO.read(f);
+                File f1 = new File("src/main/resources/res/pieces.png");
+                File f2 = new File("src/main/resources/pieces.png");
+                File f3 = new File("src/res/pieces.png");
+                
+                if (f1.exists()) {
+                    spriteSheet = ImageIO.read(f1);
+                } else if (f2.exists()) {
+                    spriteSheet = ImageIO.read(f2);
+                } else if (f3.exists()) {
+                    spriteSheet = ImageIO.read(f3);
                 } else {
-                    System.err.println("Could not find pieces.png in classpath or src/res/");
+                    System.err.println("Could not find pieces.png in classpath or src/main/resources/");
                 }
             }
             if (spriteSheet != null) {

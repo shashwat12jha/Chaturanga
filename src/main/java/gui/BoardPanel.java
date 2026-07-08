@@ -65,7 +65,10 @@ public class BoardPanel extends JPanel {
     private GameState previousState = null;
     
     public BoardPanel() {
-        this.setPreferredSize(new Dimension(cols * tileSize, rows * tileSize));
+        Dimension boardSize = new Dimension(cols * tileSize, rows * tileSize);
+        this.setPreferredSize(boardSize);
+        this.setMinimumSize(boardSize);
+        this.setMaximumSize(boardSize);
         this.renderer = new PieceRenderer(tileSize);
         this.validator = new MoveValidator();
         this.applier = new MoveApplier();
