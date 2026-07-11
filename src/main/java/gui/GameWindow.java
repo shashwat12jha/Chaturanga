@@ -47,6 +47,7 @@ public class GameWindow {
 
     private final SANFormatter    sanFormatter    = new SANFormatter();
     private final SearchEngine    searchEngine    = new SearchEngine();
+    private final NewEngineAdapter strongEngine   = new NewEngineAdapter();
     private final CoachingAnalyzer coachingAnalyzer = new CoachingAnalyzer();
 
     // ---- Game mode flags ----
@@ -87,7 +88,10 @@ public class GameWindow {
         // ---- Left Panel (toggling: timer ↔ analysis) ----
         leftPanel = new JPanel(new CardLayout());
         leftPanel.setBackground(new Color(22, 22, 30));
-        leftPanel.setPreferredSize(new Dimension(200, 700));
+        Dimension leftDim = new Dimension(220, 700);
+        leftPanel.setPreferredSize(leftDim);
+        leftPanel.setMinimumSize(leftDim);
+        leftPanel.setMaximumSize(leftDim);
 
         JPanel timerPanel = buildTimerPanel(baseMinutes);
         JLabel blackTimerLabel = (JLabel) timerPanel.getClientProperty("blackTimer");
@@ -297,14 +301,15 @@ public class GameWindow {
             int depth = visualizationMode ? 4 : 8;
 
             SearchTreeRecorder localRecorder = null;
+            Move engineMove;
             if (visualizationMode) {
                 localRecorder = new SearchTreeRecorder();
                 searchEngine.setRecorder(localRecorder);
+                engineMove = searchEngine.findBestMove(stateForEngine, depth, 8_000);
             } else {
                 searchEngine.setRecorder(null);
+                engineMove = strongEngine.findBestMove(stateForEngine, depth);
             }
-
-            Move engineMove = searchEngine.findBestMove(stateForEngine, depth, 8_000);
 
             if (visualizationMode && localRecorder != null) {
                 localRecorder.stopRecording();
@@ -334,6 +339,7 @@ public class GameWindow {
     private void cancelPendingEngine() {
         if (pendingEngine != null && !pendingEngine.isDone()) {
             searchEngine.stop();
+            strongEngine.stop();
             pendingEngine.cancel(true);
             pendingEngine = null;
         }
@@ -375,15 +381,10 @@ public class GameWindow {
         JButton btnLoad    = toolbarBtn("📂 Load",   new Color(100, 75, 25));
 
         // Toggle buttons
-        JCheckBox btnCoaching = styleCheckBox(new JCheckBox("Coaching"));
-
-        JCheckBox btnVsEngine = styleCheckBox(new JCheckBox("vs Engine"));
-        btnVsEngine.setSelected(true);
-
-        JCheckBox btnVizMode = styleCheckBox(new JCheckBox("Viz Mode"));
-
-        // Colour chooser
-        JCheckBox btnPlayBlack = styleCheckBox(new JCheckBox("Play as Black"));
+        ToggleSwitch btnCoaching = new ToggleSwitch(coachingMode);
+        ToggleSwitch btnVsEngine = new ToggleSwitch(vsEngine);
+        ToggleSwitch btnVizMode = new ToggleSwitch(visualizationMode);
+        ToggleSwitch btnPlayBlack = new ToggleSwitch(!playerIsWhite);
 
         // Personality selector
         JComboBox<String> personalityBox = new JComboBox<>(
@@ -395,15 +396,25 @@ public class GameWindow {
         toolbar.add(btnRestart);
         toolbar.add(btnUndo);
         toolbar.add(btnRedo);
+        toolbar.add(Box.createRigidArea(new Dimension(5, 0)));
         toolbar.add(new JSeparator(SwingConstants.VERTICAL));
+        toolbar.add(Box.createRigidArea(new Dimension(5, 0)));
         toolbar.add(btnSave);
         toolbar.add(btnLoad);
+        toolbar.add(Box.createRigidArea(new Dimension(5, 0)));
         toolbar.add(new JSeparator(SwingConstants.VERTICAL));
-        toolbar.add(btnVsEngine);
-        toolbar.add(btnCoaching);
-        toolbar.add(btnVizMode);
-        toolbar.add(btnPlayBlack);
-        toolbar.add(new JLabel("  🎭") {{ setForeground(new Color(160,160,180)); }});
+        toolbar.add(Box.createRigidArea(new Dimension(10, 0)));
+        
+        toolbar.add(createTogglePanel("vs Engine", btnVsEngine));
+        toolbar.add(Box.createRigidArea(new Dimension(10, 0)));
+        toolbar.add(createTogglePanel("Coaching", btnCoaching));
+        toolbar.add(Box.createRigidArea(new Dimension(10, 0)));
+        toolbar.add(createTogglePanel("Viz Mode", btnVizMode));
+        toolbar.add(Box.createRigidArea(new Dimension(10, 0)));
+        toolbar.add(createTogglePanel("Play Black", btnPlayBlack));
+        
+        toolbar.add(Box.createRigidArea(new Dimension(10, 0)));
+        toolbar.add(new JLabel("🎭 ") {{ setForeground(new Color(160,160,180)); }});
         toolbar.add(personalityBox);
 
         // ---- Actions ----
@@ -467,12 +478,27 @@ public class GameWindow {
             if (!vsEngine) {
                 cancelPendingEngine();
                 setStatus("Human vs Human", new Color(160, 160, 200));
+            } else {
+                GameState s = board.getState();
+                if (!s.isGameOver() && (s.isWhiteToMove() != playerIsWhite)) {
+                    triggerEngineMove(s);
+                }
             }
         });
 
         btnVizMode.addActionListener(e -> {
             visualizationMode = btnVizMode.isSelected();
             updateLeftPanel();
+        });
+
+        btnPlayBlack.addActionListener(e -> {
+            playerIsWhite = !btnPlayBlack.isSelected();
+            cancelPendingEngine();
+            board.restart();
+            evalBar.reset();
+            if (vsEngine && !playerIsWhite) {
+                triggerEngineMove(board.getState());
+            }
         });
 
         btnPlayBlack.addActionListener(e -> {
@@ -529,6 +555,8 @@ public class GameWindow {
         rightPanel.setBorder(new EmptyBorder(12, 8, 12, 12));
         rightPanel.setBackground(new Color(22, 22, 30));
         rightPanel.setPreferredSize(new Dimension(220, 700));
+        rightPanel.setMinimumSize(new Dimension(220, 700));
+        rightPanel.setMaximumSize(new Dimension(220, 700));
 
         JLabel title = new JLabel("Move History", SwingConstants.CENTER);
         title.setForeground(new Color(190, 190, 215));
@@ -596,13 +624,15 @@ public class GameWindow {
         cl.show(leftPanel, (coachingMode || visualizationMode) ? "COACHING" : "PLAY");
     }
 
-    private JCheckBox styleCheckBox(JCheckBox cb) {
-        cb.setBackground(new Color(28, 28, 38));
-        cb.setForeground(new Color(220, 220, 220));
-        cb.setFont(new Font("SansSerif", Font.BOLD, 12));
-        cb.setFocusPainted(false);
-        cb.setCursor(new Cursor(Cursor.HAND_CURSOR));
-        return cb;
+    private JPanel createTogglePanel(String labelText, ToggleSwitch toggle) {
+        JPanel panel = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 0));
+        panel.setBackground(new Color(18, 18, 25));
+        JLabel lbl = new JLabel(labelText);
+        lbl.setForeground(new Color(220, 220, 220));
+        lbl.setFont(new Font("SansSerif", Font.BOLD, 12));
+        panel.add(toggle);
+        panel.add(lbl);
+        return panel;
     }
 
     private static JPanel createPlayerPanel(String name, JLabel timerLabel, Color bgColor, Color fgColor) {

@@ -83,9 +83,9 @@ public final class SearchEngine {
                     alpha = Math.max(-INFINITY, completedScore - 35);
                     beta = Math.min(INFINITY, completedScore + 35);
                 }
-                int score = negamax(root, depth, alpha, beta, 0, true);
+                int score = negamax(root, depth, alpha, beta, 0, true, false);
                 if (score <= alpha || score >= beta) {
-                    score = negamax(root, depth, -INFINITY, INFINITY, 0, true);
+                    score = negamax(root, depth, -INFINITY, INFINITY, 0, true, false);
                 }
 
                 List<Move> iterationPv = principalVariation();
@@ -110,7 +110,7 @@ public final class SearchEngine {
                 elapsedMillis(), List.copyOf(completedPv));
     }
 
-    private int negamax(Position position, int depth, int alpha, int beta, int ply, boolean principalNode) {
+    private int negamax(Position position, int depth, int alpha, int beta, int ply, boolean principalNode, boolean allowNull) {
         checkStop();
         pvLength[ply] = ply;
         if (ply >= MAX_PLY - 1) return evaluator.evaluate(position);
@@ -131,6 +131,31 @@ public final class SearchEngine {
             if (table.flag(ttIndex) == TranspositionTable.UPPER_BOUND && ttScore <= alpha) return ttScore;
         }
 
+        // Null Move Pruning
+        if (allowNull && !principalNode && depth >= 3 && !inCheck && !position.isInsufficientMaterial()) {
+            int staticEval = evaluator.evaluate(position);
+            if (staticEval >= beta) {
+                int R = depth > 6 ? 3 : 2;
+                Undo nullUndo = new Undo();
+                position.makeNullMove(nullUndo);
+                int nullScore = -negamax(position, depth - 1 - R, -beta, -beta + 1, ply + 1, false, false);
+                position.unmakeNullMove(nullUndo);
+                if (nullScore >= beta && Math.abs(nullScore) < MATE_THRESHOLD) {
+                    return beta;
+                }
+            }
+        }
+
+        // Futility Pruning Setup
+        boolean futilPruning = false;
+        if (depth <= 2 && !principalNode && !inCheck && Math.abs(alpha) < MATE_THRESHOLD) {
+            int staticEval = evaluator.evaluate(position);
+            int margin = depth * 200;
+            if (staticEval + margin <= alpha) {
+                futilPruning = true;
+            }
+        }
+
         List<Move> moves = generator.generateLegalMoves(position);
         if (moves.isEmpty()) return inCheck ? -MATE_SCORE + ply : 0;
         orderMoves(position, moves, ttMove, ply);
@@ -145,17 +170,25 @@ public final class SearchEngine {
             boolean quiet = !move.isCapture() && !move.isPromotion();
             position.makeMove(move, undo);
 
+            // Futility Pruning (skip quiet moves if they don't give check)
+            if (futilPruning && quiet && moveNumber > 1) {
+                if (!generator.isInCheck(position, side ^ 1)) {
+                    position.unmakeMove(move, undo);
+                    continue;
+                }
+            }
+
             int score;
             if (moveNumber == 1) {
-                score = -negamax(position, depth - 1, -beta, -alpha, ply + 1, principalNode);
+                score = -negamax(position, depth - 1, -beta, -alpha, ply + 1, principalNode, true);
             } else {
                 int reduction = quiet && depth >= 3 && moveNumber >= 5 && !inCheck ? 1 : 0;
-                score = -negamax(position, depth - 1 - reduction, -alpha - 1, -alpha, ply + 1, false);
+                score = -negamax(position, depth - 1 - reduction, -alpha - 1, -alpha, ply + 1, false, true);
                 if (score > alpha && reduction > 0) {
-                    score = -negamax(position, depth - 1, -alpha - 1, -alpha, ply + 1, false);
+                    score = -negamax(position, depth - 1, -alpha - 1, -alpha, ply + 1, false, true);
                 }
                 if (score > alpha && score < beta) {
-                    score = -negamax(position, depth - 1, -beta, -alpha, ply + 1, principalNode);
+                    score = -negamax(position, depth - 1, -beta, -alpha, ply + 1, principalNode, true);
                 }
             }
             position.unmakeMove(move, undo);
@@ -208,6 +241,10 @@ public final class SearchEngine {
 
         Undo undo = new Undo();
         for (Move move : moves) {
+            if (!inCheck && move.isCapture() && !move.isPromotion()) {
+                if (SEE.evaluate(position, move) < 0) continue;
+            }
+
             position.makeMove(move, undo);
             int score = -quiescence(position, -beta, -alpha, ply + 1);
             position.unmakeMove(move, undo);
@@ -226,10 +263,12 @@ public final class SearchEngine {
         int encoded = move.encode();
         if (encoded == ttMove) return 2_000_000;
         if (move.isCapture()) {
-            int captured = move.flag() == Move.EN_PASSANT
-                    ? Piece.of(side ^ 1, Piece.PAWN) : position.pieceAt(move.to());
-            int attacker = position.pieceAt(move.from());
-            return 1_000_000 + pieceValue(Piece.type(captured)) * 16 - pieceValue(Piece.type(attacker));
+            int seeScore = SEE.evaluate(position, move);
+            if (seeScore >= 0) {
+                return 1_000_000 + seeScore;
+            } else {
+                return -500_000 + seeScore;
+            }
         }
         if (move.isPromotion()) return 900_000 + pieceValue(move.promotion());
         if (ply < MAX_PLY) {

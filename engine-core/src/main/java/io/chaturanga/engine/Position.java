@@ -167,6 +167,38 @@ public final class Position {
         zobristKey = undo.zobristKey;
     }
 
+    public void makeNullMove(Undo undo) {
+        undo.movedPiece = Piece.NONE;
+        undo.capturedPiece = Piece.NONE;
+        undo.castlingRights = castlingRights;
+        undo.enPassantSquare = enPassantSquare;
+        undo.halfmoveClock = halfmoveClock;
+        undo.fullmoveNumber = fullmoveNumber;
+        undo.zobristKey = zobristKey;
+        undo.historySize = historySize;
+        undo.captureSquare = -1;
+
+        if (enPassantSquare != -1) zobristKey ^= Zobrist.EN_PASSANT_FILE[enPassantSquare & 7];
+        enPassantSquare = -1;
+
+        halfmoveClock++;
+        if (sideToMove == Piece.BLACK) fullmoveNumber++;
+        sideToMove ^= 1;
+        zobristKey ^= Zobrist.SIDE_TO_MOVE;
+
+        if (historySize >= keyHistory.length) throw new IllegalStateException("Position history overflow");
+        keyHistory[historySize++] = zobristKey;
+    }
+
+    public void unmakeNullMove(Undo undo) {
+        sideToMove ^= 1;
+        enPassantSquare = undo.enPassantSquare;
+        halfmoveClock = undo.halfmoveClock;
+        fullmoveNumber = undo.fullmoveNumber;
+        historySize = undo.historySize;
+        zobristKey = undo.zobristKey;
+    }
+
     public boolean isRepetition() {
         int reversiblePlies = Math.min(halfmoveClock, historySize - 1);
         int start = historySize - 3;
