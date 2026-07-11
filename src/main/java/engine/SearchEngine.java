@@ -1,5 +1,9 @@
 package engine;
 
+import engine.bitboard.BBEvaluator;
+import engine.bitboard.BBMoveApplier;
+import engine.bitboard.BBMoveGen;
+import engine.bitboard.BBPosition;
 import model.GameState;
 import model.Move;
 import model.MoveType;
@@ -7,7 +11,6 @@ import model.Piece;
 import model.PieceType;
 import rules.MoveApplier;
 import rules.MoveGenerator;
-import rules.CheckDetector;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -54,12 +57,20 @@ public class SearchEngine {
     // Aspiration window — initial delta around previous iteration's score
     private static final int ASPIRATION_DELTA = 50;
 
+    // Legacy (used only for GUI/book helpers that work with Move objects)
     private final MoveGenerator moveGen   = new MoveGenerator();
     private final MoveApplier   applier   = new MoveApplier();
-    private final CheckDetector checkDet  = new CheckDetector();
     private final Evaluator     evaluator = new Evaluator();
     private final ZobristHasher hasher    = ZobristHasher.get();
     private final SEEEvaluator  see       = new SEEEvaluator();
+
+    // ---- Bitboard engine layer (hot path) ----
+    private final BBEvaluator  bbEval  = new BBEvaluator();
+    // Per-search BBPosition — created once in findBestMove, reused throughout search via make/unmake
+    private BBPosition bbRoot = null;
+    // Reusable move list stack (one array per ply to avoid inter-ply interference)
+    private static final int MAX_MOVES = 256;
+    private final int[][] moveStack = new int[MAX_DEPTH + 20][MAX_MOVES];
 
     private Personality personality = Personality.balanced();
     private SearchTreeRecorder recorder = null;
@@ -118,6 +129,9 @@ public class SearchEngine {
 
         long rootHash = hasher.computeHash(state);
 
+        // ---- Build BBPosition once for this search ----
+        bbRoot = BBPosition.fromGameState(state);
+
         // ---- Iterative Deepening ----
         for (int depth = 1; depth <= targetDepth; depth++) {
             long now = System.currentTimeMillis();
@@ -140,7 +154,7 @@ public class SearchEngine {
                 while (true) {
                     if (recorder != null) recorder.startRecording("root", alpha, beta);
 
-                    SearchResult rootResult = negamax(state, depth, alpha, beta, 0, rootHash, deadline, true);
+                    SearchResult rootResult = negamax(bbRoot, depth, alpha, beta, 0, rootHash, deadline, true);
 
                     if (onDepthComplete != null) {
                         onDepthComplete.run();
@@ -150,29 +164,25 @@ public class SearchEngine {
                     if (result.timedOut) break;
 
                     if (result.score <= alpha) {
-                        // Fail-low: widen lower bound
                         alpha = Math.max(alpha - delta, -MATE_SCORE);
                         delta *= 2;
                     } else if (result.score >= beta) {
-                        // Fail-high: widen upper bound
                         beta = Math.min(beta + delta, MATE_SCORE);
                         delta *= 2;
                     } else {
-                        // Inside window — done
                         break;
                     }
 
-                    // Safety: avoid infinite widening
                     if (delta > 2000) {
                         if (recorder != null) recorder.startRecording("root", -MATE_SCORE, MATE_SCORE);
-                        result = negamax(state, depth, -MATE_SCORE, MATE_SCORE, 0, rootHash, deadline, false);
+                        result = negamax(bbRoot, depth, -MATE_SCORE, MATE_SCORE, 0, rootHash, deadline, false);
                         break;
                     }
                 }
             } else {
                 // Full-window search for early depths
                 if (recorder != null) recorder.startRecording("root", -MATE_SCORE, MATE_SCORE);
-                result = negamax(state, depth, -MATE_SCORE, MATE_SCORE, 0, rootHash, deadline, false);
+                result = negamax(bbRoot, depth, -MATE_SCORE, MATE_SCORE, 0, rootHash, deadline, false);
             }
 
             if (!result.timedOut && result.bestMove != null) {
@@ -190,35 +200,47 @@ public class SearchEngine {
 
     /** Evaluate the current position without searching (for eval bar). */
     public EvalBreakdown evaluatePosition(GameState state) {
-        return evaluator.evaluate(state, personality);
+        // Use fast bitboard evaluator if available, fall back to legacy
+        try {
+            BBPosition pos = BBPosition.fromGameState(state);
+            return bbEval.evaluateBreakdown(pos, personality);
+        } catch (Exception e) {
+            return evaluator.evaluate(state, personality);
+        }
     }
 
     /** Stop an in-progress search (called from UI thread). */
     public void stop() { stopSearch = true; }
 
     // ======================================================================
-    //  Core Negamax with Alpha-Beta
+    //  Core Negamax with Alpha-Beta  (Bitboard hot path)
     // ======================================================================
 
-    private SearchResult negamax(GameState state, int depth, int alpha, int beta,
+    /**
+     * Negamax search operating on a shared mutable BBPosition.
+     * make/unmake keep it in sync — no heap allocation per node.
+     * Returns score from the perspective of the side to move.
+     *
+     * @param bbPos     shared mutable position (make/unmake applied/rolled back)
+     * @param ttBestInt int-encoded TT best move from outer scope (0 = none)
+     */
+    private SearchResult negamax(BBPosition bbPos, int depth, int alpha, int beta,
                                   int ply, long hash, long deadline, boolean nullMoveAllowed) {
         nodesSearched++;
 
-        // ---- Time check (Pitfall #5 fix: check every 1024 nodes instead of 4096) ----
+        // ---- Time check every 1024 nodes ----
         if ((nodesSearched & 0x3FF) == 0 &&
                 (System.currentTimeMillis() >= deadline || stopSearch)) {
             return new SearchResult(null, 0, true);
         }
 
         // ---- Transposition Table probe ----
-        // PITFALL #1 FIX: Never use TT cutoffs at ply 0 (root node).
-        // The TT can store EXACT entries with null bestMove from terminal nodes.
-        // If this hash-collides with the root, findBestMove returns null → crash.
-        // We still extract the TT move for move ordering at the root.
         ZobristHasher.TTEntry ttEntry = hasher.ttProbe(hash);
         Move ttMove = null;
+        int  ttMoveInt = 0;
         if (ttEntry != null) {
             ttMove = ttEntry.bestMove;
+            ttMoveInt = moveToInt(ttMove, bbPos);
             if (ply > 0 && ttEntry.depth >= depth) {
                 switch (ttEntry.type) {
                     case EXACT:
@@ -236,155 +258,130 @@ public class SearchEngine {
             }
         }
 
-        // ---- Terminal / leaf node ----
-        List<Move> legalMoves = moveGen.generateLegalMoves(state);
+        // ---- Generate pseudo-legal moves ----
+        int[] pseudoMoves = moveStack[ply];
+        int pseudoCount   = BBMoveGen.generateMoves(bbPos, pseudoMoves);
 
-        if (legalMoves.isEmpty()) {
-            boolean inCheck = checkDet.isKingInCheck(state.isWhiteToMove(), state);
+        // ---- Filter to legal moves (check-test via make/unmake) ----
+        int[] legalInts = new int[pseudoCount];
+        int legalCount  = BBMoveGen.filterLegal(bbPos, pseudoMoves, pseudoCount, legalInts);
+
+        // ---- Terminal node ----
+        if (legalCount == 0) {
+            boolean inCheck = bbPos.isInCheck(bbPos.whiteToMove);
             int score = inCheck ? -(MATE_SCORE - ply) : DRAW_SCORE;
             return new SearchResult(null, score, false);
         }
 
-        if (state.getHalfMoveClock() >= 100) {
-            return new SearchResult(null, DRAW_SCORE, false); // 50-move rule
+        if (bbPos.halfMoveClock >= 100) {
+            return new SearchResult(null, DRAW_SCORE, false);
         }
 
         // ---- Quiescence at depth 0 ----
-        if (depth == 0) {
-            int qScore = quiescence(state, Q_DEPTH, alpha, beta, ply, hash, deadline);
+        if (depth <= 0) {
+            int qScore = quiescenceBB(bbPos, Q_DEPTH, alpha, beta, ply, hash, deadline);
             return new SearchResult(null, qScore, false);
         }
 
-        // ---- Static evaluation (needed for pruning) ----
-        int staticEval = evaluator.evaluateStatic(state, personality);
-        if (!state.isWhiteToMove()) staticEval = -staticEval;
+        // ---- Static eval (for pruning decisions) ----
+        int staticEval = bbEval.evaluate(bbPos, personality);
+        if (!bbPos.whiteToMove) staticEval = -staticEval;
 
-        boolean inCheck = checkDet.isKingInCheck(state.isWhiteToMove(), state);
+        boolean inCheck = bbPos.isInCheck(bbPos.whiteToMove);
 
-        // ======================================================
-        //  NULL MOVE PRUNING
-        // ======================================================
-        // If we can pass (skip our move) and alpha-beta still returns >= beta
-        // at reduced depth, the position is so good we can prune this branch.
-        // Skip: in check, at ply 0, in endgame (zugzwang risk), when not allowed.
-        if (nullMoveAllowed
-                && depth >= 3
-                && !inCheck
-                && ply > 0
-                && !evaluator.isEndgame(state)
-                && staticEval >= beta) {
-
-            GameState nullState = state.copy();
-            nullState.setWhiteToMove(!state.isWhiteToMove());
-            nullState.setEnPassantTarget(-1);
+        // ---- Null Move Pruning ----
+        if (nullMoveAllowed && depth >= 3 && !inCheck && ply > 0
+                && !isEndgameBB(bbPos) && staticEval >= beta) {
+            // Make null move (flip side, clear EP)
+            boolean savedWtm = bbPos.whiteToMove;
+            int savedEP      = bbPos.enPassantSquare;
+            bbPos.whiteToMove    = !bbPos.whiteToMove;
+            bbPos.enPassantSquare = -1;
             long nullHash = hash ^ hasher.sideToMoveKey();
-            int prevEP = state.getEnPassantTarget();
-            if (prevEP >= 0) nullHash ^= hasher.enPassantKey(prevEP % 8);
+            if (savedEP >= 0) nullHash ^= hasher.enPassantKey(savedEP % 8);
 
-            int R = NMP_R;
-            if (depth >= 6) R = NMP_R + 1; // deeper R for more depth
+            int R = (depth >= 6) ? NMP_R + 1 : NMP_R;
+            SearchResult nullResult = negamax(bbPos, depth - 1 - R, -beta, -beta + 1,
+                    ply + 1, nullHash, deadline, false);
 
-            SearchResult nullResult = negamax(nullState, depth - 1 - R, -beta, -beta + 1,
-                    ply + 1, nullHash, deadline, false); // no chaining NMP
+            bbPos.whiteToMove    = savedWtm;
+            bbPos.enPassantSquare = savedEP;
+
             if (!nullResult.timedOut && -nullResult.score >= beta) {
-                // Null move cutoff!
                 return new SearchResult(null, beta, false);
             }
         }
 
-        // ======================================================
-        //  FUTILITY PRUNING
-        // ======================================================
-        // At depths 1 and 2, if the static eval is far below alpha, quiet moves
-        // are unlikely to raise alpha. Skip them (still search captures and checks).
-        boolean futilityPrune = !inCheck
-                && depth <= 2
-                && depth >= 1
+        // ---- Futility Pruning ----
+        boolean futilityPrune = !inCheck && depth <= 2 && depth >= 1
                 && staticEval + FUTILITY_MARGIN[depth] <= alpha
                 && Math.abs(alpha) < MATE_SCORE - 100;
 
-        // ---- Move ordering ----
-        orderMoves(legalMoves, ttMove, ply, state);
+        // ---- Order moves ----
+        orderMovesInt(legalInts, legalCount, ttMoveInt, ply, bbPos);
 
-        Move bestMove = null;
+        Move bestMove    = null;
         int originalAlpha = alpha;
-        int moveCount = 0;
+        int moveCount    = 0;
 
-        for (Move move : legalMoves) {
-            boolean isCapture = (move.captured != null || move.type == MoveType.EN_PASSANT);
-            boolean isPromotion = (move.type == MoveType.PROMOTION);
-            boolean isQuiet = !isCapture && !isPromotion;
+        for (int mi = 0; mi < legalCount; mi++) {
+            int move = legalInts[mi];
+            boolean isCapture   = BBMoveGen.isCapture(move);
+            boolean isPromotion = BBMoveGen.isPromotion(move);
+            boolean isQuiet     = !isCapture && !isPromotion;
 
-            // ---- Futility Pruning: skip quiet moves ----
-            if (futilityPrune && isQuiet && moveCount > 0) {
-                continue;
-            }
+            if (futilityPrune && isQuiet && moveCount > 0) continue;
 
-            if (recorder != null) recorder.enterNode(move, depth, alpha, beta);
+            // Convert to legacy Move for recorder and TT
+            Move legacyMove = intToMove(move, bbPos);
+            if (recorder != null) recorder.enterNode(legacyMove, depth, alpha, beta);
 
-            GameState next = applier.apply(move, state);
-            long nextHash  = hasher.updateHash(hash, move, state, next);
+            long undo    = BBMoveApplier.make(bbPos, move);
+            long nextHash = hasher.updateHashBB(hash, move, bbPos);
 
-            // ======================================================
-            //  LATE MOVE REDUCTIONS (LMR)
-            // ======================================================
-            // After the first few moves, search remaining quiet moves at
-            // reduced depth. If they raise alpha, re-search at full depth.
-            int reduction = 0;
-            boolean doFullSearch = true;
+            // ---- LMR ----
+            int reduction   = 0;
+            boolean doFull  = true;
 
-            if (moveCount >= 2
-                    && depth >= 3
-                    && isQuiet
-                    && !inCheck
-                    && !checkDet.isKingInCheck(next.isWhiteToMove(), next)) {
-
-                // Standard LMR reduction formula from Stockfish/Ethereal
+            if (moveCount >= 2 && depth >= 3 && isQuiet && !inCheck
+                    && !bbPos.isInCheck(bbPos.whiteToMove)) {
                 reduction = (int)(1.0 + Math.log(depth) * Math.log(moveCount + 1) / 2.0);
                 reduction = Math.min(reduction, depth - 1);
 
-                // Reduced-depth search with null window
-                SearchResult lmrResult = negamax(next, depth - 1 - reduction, -alpha - 1, -alpha,
+                SearchResult lmrResult = negamax(bbPos, depth - 1 - reduction, -alpha - 1, -alpha,
                         ply + 1, nextHash, deadline, true);
 
                 if (lmrResult.timedOut) {
+                    BBMoveApplier.unmake(bbPos, move, undo);
                     if (recorder != null) recorder.exitNode(0, false);
                     return new SearchResult(bestMove, alpha, true);
                 }
 
-                int lmrScore = -lmrResult.score;
-                if (lmrScore <= alpha) {
-                    // LMR confirmed: this move is not good, skip full search
-                    doFullSearch = false;
-                    if (recorder != null) recorder.exitNode(lmrScore, false);
+                if (-lmrResult.score <= alpha) {
+                    doFull = false;
+                    BBMoveApplier.unmake(bbPos, move, undo);
+                    if (recorder != null) recorder.exitNode(-lmrResult.score, false);
                     moveCount++;
                     continue;
                 }
-                // Otherwise fall through to full search
             }
 
             SearchResult child;
-            if (doFullSearch) {
-                // Principal Variation Search (PVS): null-window after first move
+            if (doFull) {
                 if (moveCount == 0) {
-                    child = negamax(next, depth - 1, -beta, -alpha,
-                            ply + 1, nextHash, deadline, true);
+                    child = negamax(bbPos, depth - 1, -beta, -alpha, ply + 1, nextHash, deadline, true);
                 } else {
-                    // Null-window search first
-                    child = negamax(next, depth - 1, -alpha - 1, -alpha,
-                            ply + 1, nextHash, deadline, true);
+                    child = negamax(bbPos, depth - 1, -alpha - 1, -alpha, ply + 1, nextHash, deadline, true);
                     if (!child.timedOut && -child.score > alpha && -child.score < beta) {
-                        // Re-search with full window
-                        child = negamax(next, depth - 1, -beta, -alpha,
-                                ply + 1, nextHash, deadline, true);
+                        child = negamax(bbPos, depth - 1, -beta, -alpha, ply + 1, nextHash, deadline, true);
                     }
                 }
             } else {
-                child = negamax(next, depth - 1, -beta, -alpha,
-                        ply + 1, nextHash, deadline, true);
+                child = negamax(bbPos, depth - 1, -beta, -alpha, ply + 1, nextHash, deadline, true);
             }
 
             int score = -child.score;
+            BBMoveApplier.unmake(bbPos, move, undo);
 
             if (child.timedOut) {
                 if (recorder != null) recorder.exitNode(score, false);
@@ -394,15 +391,14 @@ public class SearchEngine {
             boolean pruned = false;
             if (score > alpha) {
                 alpha    = score;
-                bestMove = move;
+                bestMove = legacyMove;
             }
 
             if (alpha >= beta) {
                 pruned = true;
-                // ---- Update killer and history on beta-cutoff ----
                 if (isQuiet) {
-                    updateKillers(move, ply);
-                    updateHistory(move, depth);
+                    updateKillers(legacyMove, ply);
+                    if (legacyMove != null) updateHistory(legacyMove, depth);
                 }
                 if (recorder != null) recorder.exitNode(score, true);
                 hasher.ttStore(hash, depth, beta, ZobristHasher.EntryType.LOWER_BOUND, bestMove);
@@ -413,7 +409,6 @@ public class SearchEngine {
             moveCount++;
         }
 
-        // ---- Store in transposition table ----
         ZobristHasher.EntryType entryType = alpha > originalAlpha
                 ? ZobristHasher.EntryType.EXACT
                 : ZobristHasher.EntryType.UPPER_BOUND;
@@ -428,41 +423,43 @@ public class SearchEngine {
     // Only searches captures (+ checks) to resolve tactical sequences and
     // avoid the horizon effect.
 
-    private int quiescence(GameState state, int depth, int alpha, int beta,
-                           int ply, long hash, long deadline) {
+    private int quiescenceBB(BBPosition bbPos, int depth, int alpha, int beta,
+                              int ply, long hash, long deadline) {
         nodesSearched++;
 
-        int standPat = evaluator.evaluateStatic(state, personality);
-        if (!state.isWhiteToMove()) standPat = -standPat;
+        int standPat = bbEval.evaluate(bbPos, personality);
+        if (!bbPos.whiteToMove) standPat = -standPat;
 
         if (standPat >= beta) return beta;
 
-        // ---- Delta Pruning ----
-        // If even capturing the best piece on the board can't raise alpha, skip.
-        int bigDelta = 900 + 200; // queen + safety margin
+        int bigDelta = 1100; // queen + margin
         if (standPat + bigDelta < alpha) return alpha;
 
         if (standPat > alpha) alpha = standPat;
         if (depth == 0) return alpha;
 
-        List<Move> captures = capturesOnly(moveGen.generateLegalMoves(state));
+        // Generate captures only
+        int[] caps = new int[MAX_MOVES];
+        int capCount = BBMoveGen.generateCaptures(bbPos, caps);
+        // Filter to legal captures
+        int[] legalCaps = new int[capCount];
+        int legalCapCount = BBMoveGen.filterLegal(bbPos, caps, capCount, legalCaps);
 
-        // Order captures by SEE
-        captures.sort((a, b) -> see.seeForMove(state, b) - see.seeForMove(state, a));
+        // Sort by MVV-LVA (captured piece value - moving piece value)
+        sortCaptures(legalCaps, legalCapCount);
 
-        for (Move move : captures) {
-            // ---- Delta Pruning per move ----
-            if (move.captured != null) {
-                int gain = SEEEvaluator.pieceValue(move.captured.type);
-                if (standPat + gain + 200 < alpha) continue; // this capture can't help
+        for (int i = 0; i < legalCapCount; i++) {
+            int move = legalCaps[i];
+            int capPiece = BBMoveGen.capturedPiece(move);
+            if (capPiece != BBMoveGen.NO_CAPTURE) {
+                int gain = BBEvaluator.pieceValue(capPiece);
+                if (standPat + gain + 200 < alpha) continue;
             }
 
-            // Skip losing captures in quiescence (SEE < 0)
-            if (see.seeForMove(state, move) < 0) continue;
-
-            GameState next = applier.apply(move, state);
-            long nextHash  = hasher.updateHash(hash, move, state, next);
-            int score = -quiescence(next, depth - 1, -beta, -alpha, ply + 1, nextHash, deadline);
+            long undo    = BBMoveApplier.make(bbPos, move);
+            long nextHash = hasher.updateHashBB(hash, move, bbPos);
+            int score    = -quiescenceBB(bbPos, depth - 1, -beta, -alpha, ply + 1, nextHash, deadline);
+            BBMoveApplier.unmake(bbPos, move, undo);
 
             if (score >= beta) return beta;
             if (score > alpha)  alpha = score;
@@ -471,64 +468,70 @@ public class SearchEngine {
     }
 
     // ======================================================================
-    //  Move Ordering
+    //  Move Ordering (bitboard int-move version)
     // ======================================================================
 
-    /**
-     * Order moves for maximum pruning efficiency:
-     *   1. TT / hash move
-     *   2. Winning captures (SEE >= 0), ordered by SEE score descending
-     *   3. Killer moves (quiet moves that caused cutoffs at this ply)
-     *   4. History-scored quiet moves (descending)
-     *   5. Losing captures (SEE < 0)
-     */
-    private void orderMoves(List<Move> moves, Move ttBestMove, int ply, GameState state) {
-        moves.sort((a, b) -> moveScore(b, ttBestMove, ply, state) - moveScore(a, ttBestMove, ply, state));
+    /** Sort int-encoded moves: TT move first, then winning captures, killers, history, losing captures. */
+    private void orderMovesInt(int[] moves, int count, int ttMoveInt, int ply, BBPosition pos) {
+        int[] scores = new int[count];
+        for (int i = 0; i < count; i++) scores[i] = intMoveScore(moves[i], ttMoveInt, ply, pos);
+        // Simple insertion sort (count is usually small: ~30-40 moves)
+        for (int i = 1; i < count; i++) {
+            int keyMove = moves[i]; int keyScore = scores[i];
+            int j = i - 1;
+            while (j >= 0 && scores[j] < keyScore) {
+                moves[j + 1]  = moves[j];
+                scores[j + 1] = scores[j];
+                j--;
+            }
+            moves[j + 1]  = keyMove;
+            scores[j + 1] = keyScore;
+        }
     }
 
-    private int moveScore(Move move, Move ttBest, int ply, GameState state) {
-        // 1. TT move
-        if (move.equals(ttBest)) return 2_000_000;
+    private int intMoveScore(int move, int ttMoveInt, int ply, BBPosition pos) {
+        if (move == ttMoveInt && ttMoveInt != 0) return 2_000_000;
 
-        boolean isCapture = (move.captured != null || move.type == MoveType.EN_PASSANT);
-        boolean isPromotion = (move.type == MoveType.PROMOTION);
+        boolean isCapture   = BBMoveGen.isCapture(move);
+        boolean isPromotion = BBMoveGen.isPromotion(move);
+        int capPiece = BBMoveGen.capturedPiece(move);
+        int movPiece = BBMoveGen.movingPiece(move);
 
-        // 2. Captures ordered by SEE
         if (isCapture) {
-            int seeScore = see.seeForMove(state, move);
-            if (seeScore >= 0) {
-                // Winning capture: 1_000_000 + seeScore
-                return 1_000_000 + seeScore;
-            } else {
-                // Losing capture: goes to bottom
-                return -100_000 + seeScore;
-            }
+            // MVV-LVA: value of captured - value of attacker
+            int captured = capPiece != BBMoveGen.NO_CAPTURE ? BBEvaluator.pieceValue(capPiece) : 0;
+            int attacker = BBEvaluator.pieceValue(movPiece);
+            int mvvLva   = captured - attacker / 10;
+            return mvvLva >= 0 ? 1_000_000 + mvvLva : -100_000 + mvvLva;
+        }
+        if (isPromotion) {
+            int promoPiece = BBMoveGen.promoPiece(move);
+            return 900_000 + BBEvaluator.pieceValue(promoPiece);
         }
 
-        // 3. Promotions (treat as near-winning)
-        if (isPromotion && move.promotionPiece != null) {
-            return 900_000 + move.promotionPiece.getValue();
-        }
-
-        // 4. Killer moves
+        // Killers (compare encoded from/to)
         Move[] k = killers[Math.min(ply, killers.length - 1)];
-        if (move.equals(k[0])) return 800_000;
-        if (move.equals(k[1])) return 799_999;
+        int encodedFrom = BBMoveGen.fromSq(move), encodedTo = BBMoveGen.toSq(move);
+        if (k[0] != null && k[0].fromRow * 8 + k[0].fromCol == encodedFrom
+                         && k[0].toRow   * 8 + k[0].toCol   == encodedTo) return 800_000;
+        if (k[1] != null && k[1].fromRow * 8 + k[1].fromCol == encodedFrom
+                         && k[1].toRow   * 8 + k[1].toCol   == encodedTo) return 799_999;
 
-        // 5. History heuristic
-        int pieceIdx = ZobristHasher.pieceIndex(move.piece.type, move.piece.isWhite);
-        int toSq     = move.toRow * 8 + move.toCol;
-        return history[pieceIdx][toSq];
+        // History
+        return history[movPiece][encodedTo];
     }
 
-    private List<Move> capturesOnly(List<Move> moves) {
-        List<Move> captures = new ArrayList<>();
-        for (Move m : moves) {
-            if (m.captured != null || m.type == MoveType.EN_PASSANT || m.type == MoveType.PROMOTION) {
-                captures.add(m);
+    private void sortCaptures(int[] caps, int count) {
+        // Sort descending by captured piece value (MVV)
+        for (int i = 1; i < count; i++) {
+            int key = caps[i];
+            int v   = BBEvaluator.pieceValue(BBMoveGen.capturedPiece(key));
+            int j = i - 1;
+            while (j >= 0 && BBEvaluator.pieceValue(BBMoveGen.capturedPiece(caps[j])) < v) {
+                caps[j + 1] = caps[j]; j--;
             }
+            caps[j + 1] = key;
         }
-        return captures;
     }
 
     // ======================================================================
@@ -565,6 +568,73 @@ public class SearchEngine {
 
     private void clearHistory() {
         for (int[] row : history) java.util.Arrays.fill(row, 0);
+    }
+
+    // ======================================================================
+    //  Bitboard helpers (bridge from legacy types)
+    // ======================================================================
+
+    /** Is the position in an endgame (few non-pawn pieces)? */
+    private boolean isEndgameBB(BBPosition pos) {
+        int wMajors = Long.bitCount(pos.pieces[BBPosition.W_QUEEN]  | pos.pieces[BBPosition.W_ROOK]);
+        int bMajors = Long.bitCount(pos.pieces[BBPosition.B_QUEEN]  | pos.pieces[BBPosition.B_ROOK]);
+        int wMinors = Long.bitCount(pos.pieces[BBPosition.W_BISHOP] | pos.pieces[BBPosition.W_KNIGHT]);
+        int bMinors = Long.bitCount(pos.pieces[BBPosition.B_BISHOP] | pos.pieces[BBPosition.B_KNIGHT]);
+        return (wMajors + bMajors + wMinors + bMinors) <= 3;
+    }
+
+    /**
+     * Convert a legacy Move to an int-encoded move for TT-move ordering.
+     * Returns 0 if move is null or not found in position.
+     */
+    private int moveToInt(Move m, BBPosition pos) {
+        if (m == null) return 0;
+        int from = m.fromRow * 8 + m.fromCol;
+        int to   = m.toRow   * 8 + m.toCol;
+        // Find the piece at `from` in the position
+        int piece = pos.pieceAt[from] & 0xFF;
+        if (piece == BBPosition.NO_PIECE) return 0;
+        int cap   = pos.pieceAt[to] & 0xFF;
+        int flag  = BBMoveGen.FLAG_NORMAL;
+        int promo = 0;
+        if (m.type == MoveType.EN_PASSANT)     flag = BBMoveGen.FLAG_EN_PASSANT;
+        else if (m.type == MoveType.KINGSIDE_CASTLE || m.type == MoveType.QUEENSIDE_CASTLE)
+                                               flag = BBMoveGen.FLAG_CASTLE;
+        else if (m.type == MoveType.PROMOTION) { flag = BBMoveGen.FLAG_PROMOTION; promo = piece < 6 ? 4 : 10; /* queen */ }
+        return from | (to << 6) | (piece << 12) | (cap << 16) | (flag << 20) | (promo << 22);
+    }
+
+    /**
+     * Convert an int-encoded move to a legacy Move object (for TT storage and recorder).
+     * Called only at root and when a beta cutoff records a killer/history — not in the inner loop.
+     */
+    private Move intToMove(int m, BBPosition pos) {
+        int from  = BBMoveGen.fromSq(m);
+        int to    = BBMoveGen.toSq(m);
+        int pieceIdx = BBMoveGen.movingPiece(m);
+        int capIdx   = BBMoveGen.capturedPiece(m);
+        int flag     = BBMoveGen.flag(m);
+        int promoIdx = BBMoveGen.promoPiece(m);
+
+        boolean isWhite = pieceIdx < 6;
+        model.PieceType pieceType = BBPosition.pieceTypeof(pieceIdx);
+        model.PieceType capType   = capIdx != BBMoveGen.NO_CAPTURE ? BBPosition.pieceTypeof(capIdx) : null;
+        boolean capWhite = capIdx < 6;
+
+        Piece piece     = new Piece(pieceType, isWhite, true);
+        Piece captured  = capType != null ? new Piece(capType, capWhite, true) : null;
+
+        MoveType moveType;
+        model.PieceType promoPieceType = null;
+        switch (flag) {
+            case BBMoveGen.FLAG_CASTLE:      moveType = (to > from + 1) ? MoveType.KINGSIDE_CASTLE : MoveType.QUEENSIDE_CASTLE; break;
+            case BBMoveGen.FLAG_EN_PASSANT: moveType = MoveType.EN_PASSANT; break;
+            case BBMoveGen.FLAG_PROMOTION:  moveType = MoveType.PROMOTION;
+                                            promoPieceType = BBPosition.pieceTypeof(promoIdx); break;
+            default:                         moveType = MoveType.NORMAL; break;
+        }
+
+        return new Move(from % 8, from / 8, to % 8, to / 8, piece, captured, moveType, promoPieceType);
     }
 
     // ======================================================================

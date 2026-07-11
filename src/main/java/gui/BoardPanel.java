@@ -30,7 +30,7 @@ import rules.SANFormatter;
 import io.FENParser;
 
 public class BoardPanel extends JPanel {
-    private final int tileSize = 85;
+    private final int tileSize = 70;
     private final int cols = 8;
     private final int rows = 8;
     

@@ -163,7 +163,35 @@ public class ZobristHasher {
         return hash;
     }
 
+    /**
+     * Incremental hash update using a BBPosition after make().
+     * Recomputes from the piece bitboards — O(pieces), always correct.
+     *
+     * @param prevHash hash BEFORE the move (unused, kept for API symmetry)
+     * @param bbMove   int-encoded move (BBMoveGen encoding, unused here)
+     * @param bbPos    position AFTER the move has been applied
+     */
+    public long updateHashBB(long prevHash, int bbMove, engine.bitboard.BBPosition bbPos) {
+        long hash = 0L;
+        for (int idx = 0; idx < 12; idx++) {
+            long bb = bbPos.pieces[idx];
+            while (bb != 0L) {
+                int sq = Long.numberOfTrailingZeros(bb); bb &= bb - 1;
+                hash ^= pieceSquareTable[idx][sq];
+            }
+        }
+        if (bbPos.whiteToMove) hash ^= sideToMoveKey;
+        int cr = bbPos.castlingRights;
+        if ((cr & engine.bitboard.BBPosition.CR_WHITE_KS) != 0) hash ^= castlingKeys[0];
+        if ((cr & engine.bitboard.BBPosition.CR_WHITE_QS) != 0) hash ^= castlingKeys[1];
+        if ((cr & engine.bitboard.BBPosition.CR_BLACK_KS) != 0) hash ^= castlingKeys[2];
+        if ((cr & engine.bitboard.BBPosition.CR_BLACK_QS) != 0) hash ^= castlingKeys[3];
+        if (bbPos.enPassantSquare >= 0) hash ^= enPassantFileKeys[bbPos.enPassantSquare % 8];
+        return hash;
+    }
+
     // ---- Transposition Table ----
+
 
     public enum EntryType { EXACT, LOWER_BOUND, UPPER_BOUND }
 

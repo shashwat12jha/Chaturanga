@@ -1,14 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="engine.FullTest" tests="9" skipped="0" failures="0" errors="0" timestamp="2026-07-04T17:01:24.272Z" hostname="CHETAK" time="0.374">
+<testsuite name="engine.FullTest" tests="9" skipped="0" failures="0" errors="0" timestamp="2026-07-11T13:03:03.182Z" hostname="CHETAK" time="0.118">
   <properties/>
-  <testcase name="testSearchDepth()" classname="engine.FullTest" time="0.047"/>
+  <testcase name="testSearchDepth()" classname="engine.FullTest" time="0.032"/>
   <testcase name="testDraws()" classname="engine.FullTest" time="0.002"/>
-  <testcase name="testPerft()" classname="engine.FullTest" time="0.007"/>
-  <testcase name="testCheckmateDetection()" classname="engine.FullTest" time="0.002"/>
-  <testcase name="testPromotion()" classname="engine.FullTest" time="0.006"/>
-  <testcase name="testEngineVsEngine()" classname="engine.FullTest" time="0.252"/>
-  <testcase name="testCastling()" classname="engine.FullTest" time="0.005"/>
-  <testcase name="testEvalSymmetry()" classname="engine.FullTest" time="0.002"/>
+  <testcase name="testPerft()" classname="engine.FullTest" time="0.013"/>
+  <testcase name="testCheckmateDetection()" classname="engine.FullTest" time="0.001"/>
+  <testcase name="testPromotion()" classname="engine.FullTest" time="0.001"/>
+  <testcase name="testEngineVsEngine()" classname="engine.FullTest" time="0.011"/>
+  <testcase name="testCastling()" classname="engine.FullTest" time="0.002"/>
+  <testcase name="testEvalSymmetry()" classname="engine.FullTest" time="0.001"/>
   <testcase name="testEnPassant()" classname="engine.FullTest" time="0.002"/>
   <system-out><![CDATA[]]></system-out>
   <system-err><![CDATA[]]></system-err>

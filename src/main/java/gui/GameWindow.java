@@ -48,7 +48,6 @@ public class GameWindow {
     private final SANFormatter    sanFormatter    = new SANFormatter();
     private final SearchEngine    searchEngine    = new SearchEngine();
     private final CoachingAnalyzer coachingAnalyzer = new CoachingAnalyzer();
-    private final SearchTreeRecorder treeRecorder = new SearchTreeRecorder();
 
     // ---- Game mode flags ----
     private boolean coachingMode    = false;
@@ -297,17 +296,23 @@ public class GameWindow {
         pendingEngine = engineThread.submit(() -> {
             int depth = visualizationMode ? 4 : 8;
 
+            SearchTreeRecorder localRecorder = null;
             if (visualizationMode) {
-                searchEngine.setRecorder(treeRecorder);
+                localRecorder = new SearchTreeRecorder();
+                searchEngine.setRecorder(localRecorder);
+            } else {
+                searchEngine.setRecorder(null);
             }
 
             Move engineMove = searchEngine.findBestMove(stateForEngine, depth, 8_000);
 
-            if (visualizationMode) {
-                treeRecorder.stopRecording();
+            if (visualizationMode && localRecorder != null) {
+                localRecorder.stopRecording();
+                SearchTreeRecorder.SearchNode rootNode = localRecorder.getRoot();
                 SwingUtilities.invokeLater(() ->
-                        analysisPanel.updateSearchTree(treeRecorder.getRoot()));
+                        analysisPanel.updateSearchTree(rootNode));
             }
+
 
             SwingUtilities.invokeLater(() -> {
                 // Discard result if a newer engine task was started (cancelled search)
@@ -370,19 +375,15 @@ public class GameWindow {
         JButton btnLoad    = toolbarBtn("📂 Load",   new Color(100, 75, 25));
 
         // Toggle buttons
-        JToggleButton btnCoaching = new JToggleButton("Coaching");
-        styleToggleBtn(btnCoaching);
+        JCheckBox btnCoaching = styleCheckBox(new JCheckBox("Coaching"));
 
-        JToggleButton btnVsEngine = new JToggleButton("vs Engine");
+        JCheckBox btnVsEngine = styleCheckBox(new JCheckBox("vs Engine"));
         btnVsEngine.setSelected(true);
-        styleToggleBtn(btnVsEngine);
 
-        JToggleButton btnVizMode = new JToggleButton("Viz Mode");
-        styleToggleBtn(btnVizMode);
+        JCheckBox btnVizMode = styleCheckBox(new JCheckBox("Viz Mode"));
 
         // Colour chooser
-        JToggleButton btnPlayBlack = new JToggleButton("Play as Black");
-        styleToggleBtn(btnPlayBlack);
+        JCheckBox btnPlayBlack = styleCheckBox(new JCheckBox("Play as Black"));
 
         // Personality selector
         JComboBox<String> personalityBox = new JComboBox<>(
@@ -471,7 +472,6 @@ public class GameWindow {
 
         btnVizMode.addActionListener(e -> {
             visualizationMode = btnVizMode.isSelected();
-            searchEngine.setRecorder(visualizationMode ? treeRecorder : null);
             updateLeftPanel();
         });
 
@@ -596,33 +596,13 @@ public class GameWindow {
         cl.show(leftPanel, (coachingMode || visualizationMode) ? "COACHING" : "PLAY");
     }
 
-    private void styleToggleBtn(JToggleButton btn) {
-        String baseText = btn.getText();
-        btn.setText((btn.isSelected() ? "[ON] " : "[OFF] ") + baseText);
-        
-        btn.setBackground(new Color(40, 44, 52));
-        btn.setForeground(new Color(220, 220, 220));
-        btn.setFont(new Font("SansSerif", Font.BOLD, 12));
-        btn.setFocusPainted(false);
-        btn.setCursor(new Cursor(Cursor.HAND_CURSOR));
-        btn.setBorder(new javax.swing.border.CompoundBorder(
-            new javax.swing.border.LineBorder(new Color(70, 75, 85), 1),
-            new javax.swing.border.EmptyBorder(6, 10, 6, 10)
-        ));
-        btn.setOpaque(true);
-        
-        if (btn.isSelected()) {
-            btn.setForeground(new Color(150, 255, 150));
-        }
-
-        btn.addChangeListener(e -> {
-            btn.setText((btn.isSelected() ? "[ON] " : "[OFF] ") + baseText);
-            if (btn.isSelected()) {
-                btn.setForeground(new Color(150, 255, 150));
-            } else {
-                btn.setForeground(new Color(220, 220, 220));
-            }
-        });
+    private JCheckBox styleCheckBox(JCheckBox cb) {
+        cb.setBackground(new Color(28, 28, 38));
+        cb.setForeground(new Color(220, 220, 220));
+        cb.setFont(new Font("SansSerif", Font.BOLD, 12));
+        cb.setFocusPainted(false);
+        cb.setCursor(new Cursor(Cursor.HAND_CURSOR));
+        return cb;
     }
 
     private static JPanel createPlayerPanel(String name, JLabel timerLabel, Color bgColor, Color fgColor) {
