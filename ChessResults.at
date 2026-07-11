@@ -4,7 +4,7 @@ Type=0
 CurrSwissRound=0
 Rounds=50
 CurrentPair=1
-CurrentRound=9
+CurrentRound=10
 Level=2 1\0/1#0
 [Options]
 QuitAfterTournament=0
@@ -58,7 +58,7 @@ FCHnames=
 [Data]
 LastPGNEPDindex=1
 LastGameDate=2026.07.11
-LastGameTime=23:38:03
+LastGameTime=23:41:07
 FirstGameDate=2026.07.11
 FirstGameTime=23:13:33
 Country=India
@@ -70,7 +70,7 @@ E-Mail=
 ArenaVersion=Arena 3.5.1
 [PairingResults]
 Chaturanga ------ SOS 5.1 for Arena=1?
-Chaturanga@SKJ ------ Ruffian 1.0.5=0½0000000
+Chaturanga@SKJ ------ Ruffian 1.0.5=0½00000000?
 [Participants]
 Engine1=Chaturanga@SKJ
 Engine2=Ruffian 1.0.5
