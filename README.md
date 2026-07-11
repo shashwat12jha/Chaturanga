@@ -383,7 +383,7 @@ All figures are from the reference development machine (JDK 24, July 2026). Corr
 ## 📜 License
 
 Distributed under the **MIT License**. See [`LICENSE`](LICENSE) for full terms.
-
+Author : Shashwat Kumar Jha , IIT(BHU) Varanasi
 ---
 
 <p align="center">
